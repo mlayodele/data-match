@@ -1,0 +1,7 @@
+"""Data Match — AgentQ Custom Agent.
+
+ADK CLI tools (`adk web`, `adk run`) discover root_agent here.
+"""
+from .agent import root_agent
+
+__all__ = ["root_agent"]

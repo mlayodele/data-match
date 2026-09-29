@@ -1,0 +1,96 @@
+schema_version: 2
+project:
+  name: reasoning-engine-v2
+  package: data_match
+  description: Guides users through defining unified schemas for aggregating data across
+    inconsistently-structured files
+  display_name: Data Match
+agent:
+  pattern: sequential
+  entry_module: data_match.agent
+  entry_symbol: root_agent
+  sub_agents: 3
+deployment:
+  gcp_project: horizon-ai-462013
+  location: us-central1
+  staging_bucket: gs://horizon-ai-462013-agentq-staging
+  service_account: null
+  resource_name: null
+runtime:
+  model: gemini-2.5-flash
+  python_packages:
+    - google-adk>=1.27.0
+    - google-genai>=1.0.0
+    - google-cloud-aiplatform[adk]>=1.95.0
+    - cloudpickle>=3.0.0
+    - pydantic>=2.5.0
+  extra_packages: []
+  env_vars: {}
+knowledge_base:
+  provider: none
+  datastore_id: null
+  bucket: null
+  location: global
+observability:
+  tracing: true
+  level: standard
+hooks:
+  pre_deploy: null
+  post_deploy: null
+gitops:
+  enabled: true
+  default_tier: dev
+  branch_map:
+    dev: dev
+    staging: staging
+    prod: main
+  state_path_template: agentq/{project_name}/{tier}/state.yaml
+tiers:
+  dev:
+    gcp_project: horizon-ai-462013
+    location: us-central1
+    staging_bucket: gs://horizon-ai-462013-agentq-staging
+    state_bucket: gs://horizon-ai-462013-agentq-state
+    deployer_service_account: agentq-deploy-dev@horizon-ai-462013.iam.gserviceaccount.com
+    runtime_service_account: agentq-runtime-dev@horizon-ai-462013.iam.gserviceaccount.com
+    display_name_suffix: " (dev)"
+    labels:
+      env: dev
+      managed-by: agentq
+    kb:
+      datastore_id: null
+      bucket: null
+      location: global
+      allow_freeform_mutation: true
+  staging:
+    gcp_project: horizon-ai-462013
+    location: us-central1
+    staging_bucket: gs://horizon-ai-462013-agentq-staging
+    state_bucket: gs://horizon-ai-462013-agentq-state
+    deployer_service_account: agentq-deploy-staging@horizon-ai-462013.iam.gserviceaccount.com
+    runtime_service_account: agentq-runtime-staging@horizon-ai-462013.iam.gserviceaccount.com
+    display_name_suffix: " (staging)"
+    labels:
+      env: staging
+      managed-by: agentq
+    kb:
+      datastore_id: null
+      bucket: null
+      location: global
+      allow_freeform_mutation: false
+  prod:
+    gcp_project: horizon-ai-462013
+    location: us-central1
+    staging_bucket: gs://horizon-ai-462013-agentq-staging
+    state_bucket: gs://horizon-ai-462013-agentq-state
+    deployer_service_account: agentq-deploy-prod@horizon-ai-462013.iam.gserviceaccount.com
+    runtime_service_account: agentq-runtime-prod@horizon-ai-462013.iam.gserviceaccount.com
+    display_name_suffix: " (prod)"
+    labels:
+      env: prod
+      managed-by: agentq
+    kb:
+      datastore_id: null
+      bucket: null
+      location: global
+      allow_freeform_mutation: false
