@@ -96,6 +96,11 @@ KEY PRINCIPLES:
 - Confirm understanding at each step
 - At Step 6, show full summary before asking to proceed
 
+DEBUG:
+- If user says "debug", "what files", or "show artifacts", use the debug_memory_bank tool
+- This shows all uploaded files, their sizes, and whether they're accessible
+- Helpful for troubleshooting file persistence issues
+
 SCHEMA OUTPUT (for reference):
 The schema is a JSON object containing:
 - name: schema name
@@ -316,14 +321,71 @@ async def parse_with_header(
             return {"error": str(e)}
 
 
+async def debug_memory_bank(
+    tool_context: ToolContext = None,
+) -> dict[str, Any]:
+    """Debug tool: list all available artifacts and memory state."""
+    with _tracer.start_as_current_span("debug_memory_bank") as span:
+        try:
+            if not tool_context:
+                return {"error": "No tool context"}
+
+            with _tracer.start_as_current_span("list_artifacts_debug") as list_span:
+                artifacts = await tool_context.list_artifacts() or []
+                list_span.set_attribute("artifacts_count", len(artifacts))
+                list_span.set_attribute("artifacts", artifacts)
+
+            result = {
+                "status": "success",
+                "artifacts_available": artifacts,
+                "artifacts_count": len(artifacts),
+                "message": f"Found {len(artifacts)} artifact(s) in this session",
+            }
+
+            if artifacts:
+                artifact_details = []
+                for artifact_name in artifacts:
+                    try:
+                        with _tracer.start_as_current_span("debug_load_artifact") as load_span:
+                            load_span.set_attribute("filename", artifact_name)
+                            artifact = await tool_context.load_artifact(artifact_name)
+                            file_bytes = _get_artifact_bytes(artifact)
+                            size = len(file_bytes) if file_bytes else 0
+                            load_span.set_attribute("file_size_bytes", size)
+                            artifact_details.append({
+                                "filename": artifact_name,
+                                "size_bytes": size,
+                                "size_kb": round(size / 1024, 2),
+                                "loadable": file_bytes is not None,
+                            })
+                    except Exception as e:
+                        load_span.record_exception(e)
+                        artifact_details.append({
+                            "filename": artifact_name,
+                            "error": str(e),
+                            "loadable": False,
+                        })
+
+                result["artifact_details"] = artifact_details
+
+            span.set_status(Status(StatusCode.OK))
+            return result
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            return {"error": str(e)}
+
+
 inspect_tool = FunctionTool(inspect_csv_row)
 parse_tool = FunctionTool(parse_with_header)
+debug_tool = FunctionTool(debug_memory_bank)
 
 root_agent = Agent(
     name="data_match",
     model=_settings.model,
     description="Data Match — Define comparison schemas (Steps 1-6)",
     instruction=_INSTRUCTION,
-    tools=[inspect_tool, parse_tool],
+    tools=[inspect_tool, parse_tool, debug_tool],
     before_agent_callback=capture_uploaded_files_callback,
 )

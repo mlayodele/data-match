@@ -43,6 +43,7 @@ The agent orchestrates a 6-step workflow to help users create schemas for data c
 ### Agent Architecture
 - **Tool 1**: `inspect_csv_row()` — Shows row content for user verification
 - **Tool 2**: `parse_with_header()` — Parses CSV at specified header row, returns columns & row count
+- **Tool 3**: `debug_memory_bank()` — Lists all artifacts and their loadability (debugging)
 - **Callback**: Captures uploaded Excel/CSV files and saves as artifacts
 - **Memory Bank**: Stores artifact filenames after Step 1 confirmation; referenced in Steps 2-6
 - **OpenTelemetry Tracing**: Granular spans track:
