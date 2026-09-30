@@ -7,11 +7,14 @@ from typing import Any
 import pandas as pd
 from google.adk.agents import Agent
 from google.adk.tools import FunctionTool, ToolContext
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from .config import get_settings
 from .file_parser import parse_file
 
 _settings = get_settings()
+_tracer = trace.get_tracer(__name__)
 
 _INSTRUCTION = """\
 You are the Data Match Agent. Your job is to help users define comparison schemas
@@ -114,36 +117,70 @@ def _get_artifact_bytes(artifact):
 
 async def capture_uploaded_files_callback(callback_context) -> None:
     """Capture uploaded files and save as artifacts."""
-    try:
-        ictx = getattr(callback_context, "_invocation_context", None)
-        if ictx is None or ictx.artifact_service is None:
-            return
+    with _tracer.start_as_current_span("capture_uploaded_files_callback") as span:
+        try:
+            ictx = getattr(callback_context, "_invocation_context", None)
+            span.set_attribute("has_invocation_context", ictx is not None)
+            if ictx is None or ictx.artifact_service is None:
+                span.set_attribute("artifact_service_available", False)
+                return
 
-        user_content = getattr(ictx, "user_content", None)
-        if user_content is None:
-            return
+            span.set_attribute("artifact_service_available", True)
 
-        parts = getattr(user_content, "parts", None) or []
-        existing = set(await callback_context.list_artifacts() or [])
+            user_content = getattr(ictx, "user_content", None)
+            span.set_attribute("has_user_content", user_content is not None)
+            if user_content is None:
+                return
 
-        for part in parts:
-            inline = getattr(part, "inline_data", None)
-            if inline is None or getattr(inline, "data", None) is None:
-                continue
+            parts = getattr(user_content, "parts", None) or []
+            span.set_attribute("parts_count", len(parts))
 
-            mime = (getattr(inline, "mime_type", "") or "").lower()
-            display_name = getattr(part, "file_name", None) or ""
+            with _tracer.start_as_current_span("list_existing_artifacts") as list_span:
+                existing = set(await callback_context.list_artifacts() or [])
+                list_span.set_attribute("existing_artifacts_count", len(existing))
+                list_span.set_attribute("existing_artifacts", list(existing))
 
-            if not (mime in {"text/csv", "application/csv", "application/vnd.ms-excel"} or display_name.lower().endswith((".csv", ".xlsx"))):
-                continue
+            for i, part in enumerate(parts):
+                with _tracer.start_as_current_span("process_upload_part") as part_span:
+                    part_span.set_attribute("part_index", i)
 
-            if display_name and display_name not in existing:
-                await callback_context.save_artifact(display_name, part)
-                existing.add(display_name)
+                    inline = getattr(part, "inline_data", None)
+                    if inline is None or getattr(inline, "data", None) is None:
+                        part_span.set_attribute("has_inline_data", False)
+                        continue
 
-    except Exception as e:
-        print(f"UPLOAD CALLBACK ERROR: {type(e).__name__}: {e}")
-        raise
+                    part_span.set_attribute("has_inline_data", True)
+
+                    mime = (getattr(inline, "mime_type", "") or "").lower()
+                    display_name = getattr(part, "file_name", None) or ""
+
+                    part_span.set_attribute("mime_type", mime)
+                    part_span.set_attribute("display_name", display_name)
+
+                    if not (mime in {"text/csv", "application/csv", "application/vnd.ms-excel"} or display_name.lower().endswith((".csv", ".xlsx"))):
+                        part_span.set_attribute("file_type_valid", False)
+                        continue
+
+                    part_span.set_attribute("file_type_valid", True)
+
+                    if display_name and display_name not in existing:
+                        with _tracer.start_as_current_span("save_artifact") as save_span:
+                            save_span.set_attribute("filename", display_name)
+                            save_span.set_attribute("is_new", True)
+                            await callback_context.save_artifact(display_name, part)
+                            existing.add(display_name)
+                            save_span.set_attribute("save_status", "success")
+                    else:
+                        part_span.set_attribute("artifact_already_exists", True)
+
+            span.set_attribute("final_artifacts_count", len(existing))
+            span.set_attribute("final_artifacts", list(existing))
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            print(f"UPLOAD CALLBACK ERROR: {type(e).__name__}: {e}")
+            raise
 
 
 async def inspect_csv_row(
@@ -152,31 +189,56 @@ async def inspect_csv_row(
     tool_context: ToolContext = None,
 ) -> dict[str, Any]:
     """Show what's in a specific row of the CSV (1-indexed row number from user)."""
-    try:
-        if not tool_context:
-            return {"error": "No tool context"}
+    with _tracer.start_as_current_span("inspect_csv_row") as span:
+        span.set_attribute("filename", filename)
+        span.set_attribute("row_number", row_number)
 
-        artifact = await tool_context.load_artifact(filename)
-        file_bytes = _get_artifact_bytes(artifact)
-        if not file_bytes:
-            return {"error": f"Could not read {filename}"}
+        try:
+            if not tool_context:
+                span.set_attribute("error", "No tool context")
+                return {"error": "No tool context"}
 
-        df = pd.read_csv(BytesIO(file_bytes), header=None)
-        row_idx = row_number - 1
-        if row_idx < 0 or row_idx >= len(df):
-            return {"error": f"Row {row_number} out of range (1-{len(df)})"}
+            with _tracer.start_as_current_span("load_artifact") as load_span:
+                load_span.set_attribute("filename", filename)
+                artifact = await tool_context.load_artifact(filename)
+                load_span.set_attribute("artifact_loaded", artifact is not None)
 
-        row_data = df.iloc[row_idx].tolist()
-        row_str = " | ".join(str(x) if pd.notna(x) else "" for x in row_data)
+            file_bytes = _get_artifact_bytes(artifact)
+            span.set_attribute("file_bytes_extracted", file_bytes is not None)
+            if file_bytes is None:
+                span.set_attribute("error", f"Could not read {filename}")
+                return {"error": f"Could not read {filename}"}
 
-        return {
-            "status": "success",
-            "filename": filename,
-            "row_number": row_number,
-            "row_content": row_str,
-        }
-    except Exception as e:
-        return {"error": str(e)}
+            with _tracer.start_as_current_span("parse_csv") as parse_span:
+                parse_span.set_attribute("file_size_bytes", len(file_bytes))
+                df = pd.read_csv(BytesIO(file_bytes), header=None)
+                parse_span.set_attribute("total_rows", len(df))
+                parse_span.set_attribute("total_columns", len(df.columns))
+
+            row_idx = row_number - 1
+            span.set_attribute("row_index_0_based", row_idx)
+
+            if row_idx < 0 or row_idx >= len(df):
+                span.set_attribute("error", f"Row {row_number} out of range")
+                return {"error": f"Row {row_number} out of range (1-{len(df)})"}
+
+            row_data = df.iloc[row_idx].tolist()
+            row_str = " | ".join(str(x) if pd.notna(x) else "" for x in row_data)
+
+            span.set_attribute("row_content_length", len(row_str))
+            span.set_attribute("row_values_count", len(row_data))
+            span.set_status(Status(StatusCode.OK))
+
+            return {
+                "status": "success",
+                "filename": filename,
+                "row_number": row_number,
+                "row_content": row_str,
+            }
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            return {"error": str(e)}
 
 
 async def parse_with_header(
@@ -185,37 +247,73 @@ async def parse_with_header(
     tool_context: ToolContext = None,
 ) -> dict[str, Any]:
     """Parse CSV with specified header row (1-indexed from user, convert to 0-indexed)."""
-    try:
-        if not tool_context:
-            return {"error": "No tool context"}
+    with _tracer.start_as_current_span("parse_with_header") as span:
+        span.set_attribute("filename", filename)
+        span.set_attribute("header_row", header_row)
 
-        artifact = await tool_context.load_artifact(filename)
-        file_bytes = _get_artifact_bytes(artifact)
-        if not file_bytes:
-            return {"error": f"Could not read {filename}"}
+        try:
+            if not tool_context:
+                span.set_attribute("error", "No tool context")
+                return {"error": "No tool context"}
 
-        # Get the row content for display
-        df_raw = pd.read_csv(BytesIO(file_bytes), header=None)
-        row_idx = header_row - 1
-        if row_idx >= 0 and row_idx < len(df_raw):
-            row_content = " | ".join(str(x) if pd.notna(x) else "" for x in df_raw.iloc[row_idx].tolist())
-        else:
-            row_content = ""
+            with _tracer.start_as_current_span("load_artifact_for_parse") as load_span:
+                load_span.set_attribute("filename", filename)
+                artifact = await tool_context.load_artifact(filename)
+                load_span.set_attribute("artifact_loaded", artifact is not None)
+                if artifact is None:
+                    load_span.set_attribute("error", "Artifact is None")
 
-        # Parse with the specified header
-        header_idx = header_row - 1
-        row_count, columns = parse_file(file_bytes, filename, header_row=header_idx)
+            file_bytes = _get_artifact_bytes(artifact)
+            span.set_attribute("file_bytes_extracted", file_bytes is not None)
+            if file_bytes is None:
+                span.set_attribute("error", f"Could not extract bytes from {filename}")
+                return {"error": f"Could not read {filename}"}
 
-        return {
-            "status": "success",
-            "filename": filename,
-            "header_row": header_row,
-            "row_content": row_content,
-            "row_count": row_count,
-            "columns": columns,
-        }
-    except Exception as e:
-        return {"error": str(e)}
+            span.set_attribute("file_size_bytes", len(file_bytes))
+
+            # Get the row content for display
+            with _tracer.start_as_current_span("parse_raw_for_preview") as preview_span:
+                preview_span.set_attribute("header_row", header_row)
+                df_raw = pd.read_csv(BytesIO(file_bytes), header=None)
+                preview_span.set_attribute("total_rows", len(df_raw))
+                preview_span.set_attribute("total_columns", len(df_raw.columns))
+
+                row_idx = header_row - 1
+                preview_span.set_attribute("row_index_0_based", row_idx)
+
+                if row_idx >= 0 and row_idx < len(df_raw):
+                    row_content = " | ".join(str(x) if pd.notna(x) else "" for x in df_raw.iloc[row_idx].tolist())
+                    preview_span.set_attribute("header_row_found", True)
+                    preview_span.set_attribute("header_content_length", len(row_content))
+                else:
+                    row_content = ""
+                    preview_span.set_attribute("header_row_found", False)
+                    preview_span.set_attribute("error", f"Header row {header_row} out of range")
+
+            # Parse with the specified header
+            with _tracer.start_as_current_span("parse_file_with_header") as parse_span:
+                parse_span.set_attribute("filename", filename)
+                parse_span.set_attribute("header_row", header_row)
+                header_idx = header_row - 1
+                row_count, columns = parse_file(file_bytes, filename, header_row=header_idx)
+                parse_span.set_attribute("row_count", row_count)
+                parse_span.set_attribute("columns_count", len(columns))
+                parse_span.set_attribute("columns", columns)
+
+            span.set_status(Status(StatusCode.OK))
+            return {
+                "status": "success",
+                "filename": filename,
+                "header_row": header_row,
+                "row_content": row_content,
+                "row_count": row_count,
+                "columns": columns,
+            }
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            span.set_attribute("error", str(e))
+            return {"error": str(e)}
 
 
 inspect_tool = FunctionTool(inspect_csv_row)

@@ -47,6 +47,9 @@ REQUIREMENTS = [
     "pandas>=2.0.0",
     "openpyxl>=3.0.0",
     "google-cloud-storage>=2.0.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-gcp-trace>=1.5.0",
 ]
 
 

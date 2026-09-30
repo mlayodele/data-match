@@ -45,6 +45,12 @@ The agent orchestrates a 6-step workflow to help users create schemas for data c
 - **Tool 2**: `parse_with_header()` — Parses CSV at specified header row, returns columns & row count
 - **Callback**: Captures uploaded Excel/CSV files and saves as artifacts
 - **Memory Bank**: Stores artifact filenames after Step 1 confirmation; referenced in Steps 2-6
+- **OpenTelemetry Tracing**: Granular spans track:
+  - File upload/artifact capture (list existing, detect file type, save new)
+  - Artifact loading and bytes extraction
+  - CSV parsing and header detection
+  - Tool execution with parameters and results
+  - All errors and edge cases (missing files, out-of-range rows, etc.)
 
 ### File Handling
 - Excel/CSV files uploaded → converted to artifacts by callback
@@ -67,6 +73,32 @@ python scripts/deploy_to_agent_engine.py --model gemini-2.5-flash update --resou
 5. Review final schema in memory bank
 
 **Note**: If second file fails to load initially, re-upload it.
+
+## Tracing & Debugging
+
+All operations emit OpenTelemetry traces to Cloud Trace. Key instrumented flows:
+
+**File Upload Flow**
+- `capture_uploaded_files_callback`: Lists existing artifacts, processes each file part
+  - Checks MIME type and filename extension
+  - Saves new artifacts with filename as identifier
+  - Tracks existing and final artifact counts
+
+**Tool Execution (inspect_csv_row)**
+- `load_artifact`: Attempts to load file by name from artifact service
+- `parse_csv`: Reads file bytes, extracts requested row
+- Attributes: filename, row number, row content length, total rows/columns
+
+**Tool Execution (parse_with_header)**
+- `load_artifact_for_parse`: Loads file and extracts bytes (critical for second-file debugging)
+- `parse_raw_for_preview`: Validates header row exists, extracts content
+- `parse_file_with_header`: Final parse with detected columns
+- Attributes: filename, header row, file size, row count, column list
+
+**Error Tracking**
+- Every span records exceptions with full error messages
+- "Cannot read file" errors trigger artifact_loaded and file_bytes_extracted checks
+- Out-of-range row errors show total rows available
 
 ## Future Enhancements
 
