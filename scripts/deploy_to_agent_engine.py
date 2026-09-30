@@ -122,7 +122,7 @@ def cmd_create(args: argparse.Namespace) -> int:
     print(f"Staging bucket: {args.staging_bucket}")
     print(f"Requirements: {len(REQUIREMENTS)} packages")
     print(f"Env vars: {sorted(env_vars.keys())}")
-    print(f"Tools: list_uploaded_files, inspect_csv_row, parse_with_header, debug_memory_bank")
+    print(f"Tools: discover_uploaded_files, list_uploaded_files, inspect_csv_row, parse_with_header, debug_memory_bank")
     print(f"Callback: capture_uploaded_files_callback")
     print(f"\nThis may take several minutes...\n")
 
@@ -163,7 +163,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     print(f"Resource: {args.resource_name}")
     print(f"Model: {args.model}")
     print(f"Env vars: {sorted(env_vars.keys())}")
-    print(f"Tools: list_uploaded_files, inspect_csv_row, parse_with_header, debug_memory_bank")
+    print(f"Tools: discover_uploaded_files, list_uploaded_files, inspect_csv_row, parse_with_header, debug_memory_bank")
     print(f"Callback: capture_uploaded_files_callback")
     print(f"\nThis may take several minutes...\n")
 

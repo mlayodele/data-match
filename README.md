@@ -41,12 +41,23 @@ The agent orchestrates a 6-step workflow to help users create schemas for data c
 ## How It Works
 
 ### Agent Architecture
-- **Tool 1**: `list_uploaded_files()` — Lists all artifacts currently available (called at Step 1)
-- **Tool 2**: `inspect_csv_row()` — Shows row content for user verification
-- **Tool 3**: `parse_with_header()` — Parses CSV at specified header row, returns columns & row count
-- **Tool 4**: `debug_memory_bank()` — Shows artifact contents for debugging
+
+**Gateway Pattern** (handles Agent Q's Excel→CSV conversion):
+- **Tool 1**: `discover_uploaded_files()` — Gateway tool for file discovery
+  - Lists all converted CSV files (Agent Q converts each Excel sheet to CSV)
+  - Parses the naming pattern to map CSVs back to original Excel files
+  - Returns: original filenames + mapping of which CSVs belong to which Excel
+  - Example: `Agent QA - DCM.xlsx_Sheet1_hash.csv` → maps back to `Agent QA - DCM.xlsx`
+
+**Processing Tools**:
+- **Tool 2**: `list_uploaded_files()` — Raw list of all artifacts
+- **Tool 3**: `inspect_csv_row()` — Shows row content for user verification
+- **Tool 4**: `parse_with_header()` — Parses CSV at specified header row, returns columns & row count
+- **Tool 5**: `debug_memory_bank()` — Shows artifact contents for debugging
+
+**Infrastructure**:
 - **Callback**: Attempts to capture uploaded Excel/CSV files and save as artifacts (unreliable)
-- **Memory Bank**: Stores artifact filenames after Step 1 confirmation; referenced in Steps 2-6
+- **Memory Bank**: Stores discovered filenames and CSV mappings; referenced in Steps 2-6
 - **OpenTelemetry Tracing**: Granular spans track:
   - File uploads and artifact operations
   - Artifact loading and bytes extraction

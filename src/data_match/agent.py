@@ -24,9 +24,11 @@ WORKFLOW (6 steps):
 
 STEP 1: Upload & Parse Files
 - Ask user to upload two files (Excel or CSV)
-- After user uploads, IMMEDIATELY call list_uploaded_files tool to see what's actually available
-- Show the user the list of files found
-- Store both artifact filenames in your memory bank for reference throughout the session
+- After user uploads, IMMEDIATELY call discover_uploaded_files tool
+  - This discovers the original Excel files and maps them to their converted CSVs
+  - Agent Q converts each Excel sheet to a separate CSV automatically
+- Show the user the original filenames discovered
+- Store the original filenames and CSV mappings in your memory bank for reference throughout the session
 - For EACH uploaded file:
   * CRITICAL: Agent Q adds preamble rows (metadata, notes, etc.) before actual headers. Real headers are often on row 20-40, NOT row 1
   * Ask user: "What row number contains your ACTUAL column headers for [filename]? (e.g., 31, 25, etc.)"
@@ -335,6 +337,85 @@ async def parse_with_header(
             return {"error": str(e)}
 
 
+def _parse_converted_filename(csv_filename: str) -> dict[str, Any]:
+    """Parse Agent Q converted CSV filename to extract original Excel name and sheet info.
+
+    Pattern: [original_name].xlsx_Sheet[name]-[hash].csv
+    Example: Agent QA - DCM - w.o 5.11 .xlsx_Sheet1_1503726_2026_version_Weekly_QA_.csv
+    """
+    if not csv_filename.endswith(".csv"):
+        return {"original": None, "sheet": None}
+
+    # Remove .csv extension
+    base = csv_filename[:-4]
+
+    # Look for .xlsx_Sheet pattern
+    if ".xlsx_Sheet" not in base:
+        return {"original": None, "sheet": None}
+
+    # Split on .xlsx_Sheet
+    parts = base.split(".xlsx_Sheet", 1)
+    original_name = parts[0] + ".xlsx"  # Reconstruct original name
+    sheet_info = parts[1] if len(parts) > 1 else None
+
+    return {
+        "original": original_name,
+        "sheet": sheet_info,
+        "csv_filename": csv_filename,
+    }
+
+
+async def discover_uploaded_files(
+    tool_context: ToolContext = None,
+) -> dict[str, Any]:
+    """Gateway tool: Discover uploaded files and map CSVs back to original Excel files.
+
+    Handles Agent Q's conversion where each Excel sheet becomes a separate CSV.
+    Returns a mapping of original filenames to their constituent CSV files.
+    """
+    with _tracer.start_as_current_span("discover_uploaded_files") as span:
+        try:
+            if not tool_context:
+                return {"error": "No tool context"}
+
+            with _tracer.start_as_current_span("list_artifacts") as list_span:
+                artifacts = await tool_context.list_artifacts() or []
+                list_span.set_attribute("artifacts_count", len(artifacts))
+                list_span.set_attribute("artifacts", artifacts)
+
+            # Parse filenames to find original Excel files and their sheets
+            excel_map: dict[str, list[dict]] = {}
+
+            for csv_filename in artifacts:
+                parsed = _parse_converted_filename(csv_filename)
+
+                if parsed["original"]:
+                    original = parsed["original"]
+                    if original not in excel_map:
+                        excel_map[original] = []
+                    excel_map[original].append({
+                        "csv_filename": csv_filename,
+                        "sheet": parsed["sheet"],
+                    })
+
+            span.set_attribute("original_files_count", len(excel_map))
+            span.set_attribute("original_files", list(excel_map.keys()))
+            span.set_status(Status(StatusCode.OK))
+
+            return {
+                "status": "success",
+                "original_files": list(excel_map.keys()),
+                "file_count": len(excel_map),
+                "file_mapping": excel_map,
+                "message": f"Found {len(excel_map)} Excel file(s)" if excel_map else "No files uploaded yet",
+            }
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            return {"error": str(e)}
+
+
 async def list_uploaded_files(
     tool_context: ToolContext = None,
 ) -> dict[str, Any]:
@@ -444,6 +525,7 @@ async def debug_memory_bank(
             return {"error": str(e)}
 
 
+discover_tool = FunctionTool(discover_uploaded_files)
 inspect_tool = FunctionTool(inspect_csv_row)
 parse_tool = FunctionTool(parse_with_header)
 list_files_tool = FunctionTool(list_uploaded_files)
@@ -454,6 +536,6 @@ root_agent = Agent(
     model=_settings.model,
     description="Data Match — Define comparison schemas (Steps 1-6)",
     instruction=_INSTRUCTION,
-    tools=[list_files_tool, inspect_tool, parse_tool, debug_tool],
+    tools=[discover_tool, list_files_tool, inspect_tool, parse_tool, debug_tool],
     before_agent_callback=capture_uploaded_files_callback,
 )
