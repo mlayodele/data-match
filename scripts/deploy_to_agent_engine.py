@@ -41,9 +41,9 @@ DEFAULT_MODEL = os.getenv("MODEL", "gemini-2.5-flash")
 
 # Requirements for data match agent
 REQUIREMENTS = [
-    "google-adk>=0.1.0",
+    "google-adk>=1.18.0",
     "google-genai>=0.1.0",
-    "google-cloud-aiplatform>=1.0.0",
+    "google-cloud-aiplatform>=1.126.1",
     "pandas>=2.0.0",
     "openpyxl>=3.0.0",
     "google-cloud-storage>=2.0.0",
@@ -73,6 +73,10 @@ def _build_env_vars(args: argparse.Namespace) -> dict[str, str]:
     env["GCP_PROJECT"] = args.project
     env["LOCATION"] = args.location
     env["GOOGLE_GENAI_USE_VERTEXAI"] = "1"
+    # Enable OpenTelemetry observability
+    env["ENABLE_OBSERVABILITY"] = "true"
+    env["OTEL_ENABLED"] = "true"
+    env["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
     return env
 
 

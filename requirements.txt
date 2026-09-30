@@ -1,6 +1,6 @@
-google-adk>=0.1.0
+google-adk>=1.18.0
 google-genai>=0.1.0
-google-cloud-aiplatform>=1.0.0
+google-cloud-aiplatform>=1.126.1
 vertexai>=1.0.0
 cloudpickle>=3.0.0
 pandas>=2.0.0
