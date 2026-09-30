@@ -324,7 +324,7 @@ async def parse_with_header(
 async def debug_memory_bank(
     tool_context: ToolContext = None,
 ) -> dict[str, Any]:
-    """Debug tool: list all available artifacts and memory state."""
+    """Debug tool: show all artifacts with preview of their contents."""
     with _tracer.start_as_current_span("debug_memory_bank") as span:
         try:
             if not tool_context:
@@ -340,33 +340,58 @@ async def debug_memory_bank(
                 "artifacts_available": artifacts,
                 "artifacts_count": len(artifacts),
                 "message": f"Found {len(artifacts)} artifact(s) in this session",
+                "artifacts": {},
             }
 
             if artifacts:
-                artifact_details = []
                 for artifact_name in artifacts:
                     try:
                         with _tracer.start_as_current_span("debug_load_artifact") as load_span:
                             load_span.set_attribute("filename", artifact_name)
                             artifact = await tool_context.load_artifact(artifact_name)
                             file_bytes = _get_artifact_bytes(artifact)
-                            size = len(file_bytes) if file_bytes else 0
+
+                            if file_bytes is None:
+                                load_span.set_attribute("loadable", False)
+                                result["artifacts"][artifact_name] = {
+                                    "status": "failed",
+                                    "error": "Could not extract bytes",
+                                }
+                                continue
+
+                            size = len(file_bytes)
                             load_span.set_attribute("file_size_bytes", size)
-                            artifact_details.append({
-                                "filename": artifact_name,
-                                "size_bytes": size,
-                                "size_kb": round(size / 1024, 2),
-                                "loadable": file_bytes is not None,
-                            })
+                            load_span.set_attribute("loadable", True)
+
+                            # Try to parse as CSV and show preview
+                            try:
+                                df = pd.read_csv(BytesIO(file_bytes), header=None, nrows=10)
+                                preview_text = df.to_string()
+                                result["artifacts"][artifact_name] = {
+                                    "status": "loaded",
+                                    "size_bytes": size,
+                                    "size_kb": round(size / 1024, 2),
+                                    "total_rows_visible": len(df),
+                                    "columns": len(df.columns),
+                                    "preview": preview_text,
+                                }
+                            except Exception as parse_e:
+                                # If not CSV, just show raw content
+                                content = file_bytes.decode('utf-8', errors='replace')[:500]
+                                result["artifacts"][artifact_name] = {
+                                    "status": "loaded",
+                                    "size_bytes": size,
+                                    "size_kb": round(size / 1024, 2),
+                                    "parse_error": str(parse_e),
+                                    "raw_preview": content,
+                                }
+
                     except Exception as e:
                         load_span.record_exception(e)
-                        artifact_details.append({
-                            "filename": artifact_name,
+                        result["artifacts"][artifact_name] = {
+                            "status": "error",
                             "error": str(e),
-                            "loadable": False,
-                        })
-
-                result["artifact_details"] = artifact_details
+                        }
 
             span.set_status(Status(StatusCode.OK))
             return result
