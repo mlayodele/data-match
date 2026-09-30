@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Document QA Tool 2.0</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background: #f4f6f9; color: #1a1a1a; font-size: 14px; min-height: 100vh; }
+  .page { max-width: 1400px; margin: 0 auto; padding: 2rem 1.5rem; }
+  h1 { font-size: 20px; font-weight: 600; color: #11263b; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #666; margin-bottom: 1.5rem; }
+
+  .step { background: #fff; border: 1px solid #e5e5e5; border-radius: 10px; padding: 1.25rem 1.25rem; margin-bottom: 1rem; }
+  .step-title { font-size: 13px; font-weight: 600; color: #11263b; margin-bottom: 0.9rem; display: flex; align-items: center; gap: 8px; }
+  .step-num { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: #11263b; color: #fff; font-size: 11px; font-weight: 700; }
+  .step.disabled { opacity: 0.4; pointer-events: none; }
+
+  .upload-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .drop-zone { border: 2px dashed #ccc; border-radius: 8px; padding: 0.7rem 0.8rem; text-align: center; cursor: pointer; transition: all 0.15s; background: #fafbfc; }
+  .drop-zone:hover { border-color: #888; background: #fafafa; }
+  .drop-zone.over { border-color: #3b82f6; background: #eff6ff; }
+  .drop-zone.loaded { border-style: solid; border-color: #16a34a; background: #f0fdf4; }
+  .drop-icon { font-size: 18px; margin-bottom: 3px; }
+  .drop-title { font-size: 12px; font-weight: 600; color: #333; }
+  .drop-sub { font-size: 10px; color: #888; margin-top: 2px; }
+  .file-name { font-size: 12px; font-weight: 600; color: #16a34a; margin-top: 6px; }
+  .source-label-input { width: 100%; font-size: 12px; padding: 5px 8px; border-radius: 6px; border: 1px solid #ddd; margin-bottom: 6px; text-align: center; font-weight: 600; color: #11263b; }
+
+  .map-section { margin-top: 1rem; }
+  .map-row { display: grid; grid-template-columns: 140px 1fr 30px 1fr; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .metric-row-wrap { border: 1px solid #eee; border-radius: 8px; padding: 10px; margin-bottom: 8px; background: #fafbfc; }
+  .metric-row-wrap .map-row { grid-template-columns: 130px 1fr 26px 1fr 30px; margin-bottom: 8px; }
+  .metric-threshold-line { display: flex; align-items: center; gap: 14px; padding-left: 144px; flex-wrap: wrap; }
+  .metric-threshold-group { display: flex; align-items: center; gap: 6px; }
+  .metric-threshold-group label { font-size: 11px; color: #888; }
+  .metric-threshold-group input[type=number] { font-size: 12px; padding: 5px 7px; border-radius: 6px; border: 1px solid #ddd; width: 64px; text-align: center; }
+  .metric-threshold-group span.unit { font-size: 11px; color: #999; }
+  .metric-threshold-or { font-size: 10px; color: #bbb; text-transform: uppercase; letter-spacing: 0.04em; }
+  .map-label { font-size: 12px; font-weight: 600; color: #555; }
+  .map-row select, .map-row input[type=text] { font-size: 12px; padding: 6px 8px; border-radius: 6px; border: 1px solid #ddd; background: #fff; width: 100%; }
+  .map-arrow { text-align: center; color: #aaa; font-size: 13px; }
+  .map-section-label { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin: 1rem 0 0.5rem; }
+  .add-row-btn, .remove-row-btn { font-size: 11px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #555; cursor: pointer; }
+  .add-row-btn:hover { background: #f4f6f9; }
+  .remove-row-btn { color: #dc2626; border-color: #fca5a5; padding: 4px 8px; }
+  .remove-row-btn:hover { background: #fef2f2; }
+
+  .mapping-io-row { display: flex; gap: 8px; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #f0f0ee; flex-wrap: wrap; }
+  .mapping-io-btn { font-size: 12px; padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #333; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .mapping-io-btn:hover { background: #f4f6f9; }
+  .mapping-io-btn.primary { background: #11263b; color: #fff; border-color: #11263b; }
+  .mapping-io-btn.primary:hover { opacity: 0.85; }
+  .mapping-io-hint { font-size: 11px; color: #999; margin-left: 2px; }
+  .mapping-loaded-tag { font-size: 11px; color: #16a34a; font-weight: 600; background: #f0fdf4; padding: 4px 9px; border-radius: 5px; }
+
+  .config-row { display: flex; gap: 16px; align-items: center; margin-top: 1rem; flex-wrap: wrap; }
+  .config-field { display: flex; align-items: center; gap: 6px; }
+  .config-field label { font-size: 12px; color: #555; font-weight: 600; }
+  .config-field input[type=number] { width: 70px; font-size: 12px; padding: 5px 8px; border-radius: 6px; border: 1px solid #ddd; }
+  .config-hint { font-size: 11px; color: #999; }
+
+  .filter-block { border: 1px solid #eee; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: #fafbfc; }
+  .filter-block-title { font-size: 12px; font-weight: 600; color: #11263b; margin-bottom: 8px; }
+  .filter-rule { border: 1px solid #e5e5e5; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; background: #fff; }
+  .filter-rule-top { display: grid; grid-template-columns: 1fr 110px 30px; gap: 8px; align-items: center; }
+  .filter-rule select { font-size: 12px; padding: 6px 8px; border-radius: 6px; border: 1px solid #ddd; background: #fff; width: 100%; }
+  .filter-rule-hint { font-size: 11px; color: #999; margin-top: 2px; }
+  .version-tag { font-size: 11px; color: #aaa; margin-left: 8px; font-weight: 400; cursor: pointer; text-decoration: underline; }
+  .version-tag:hover { color: #666; }
+  .version-history { background: #f8fafc; border: 1px solid #e8edf3; border-radius: 8px; padding: 10px 14px; margin-bottom: 1rem; font-size: 12px; color: #555; display: none; }
+  .version-history.open { display: block; }
+  .version-history h3 { font-size: 12px; font-weight: 600; color: #11263b; margin-bottom: 8px; }
+  .version-entry { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
+  .version-entry:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .version-entry .v-num { font-weight: 600; color: #11263b; }
+  .version-entry .v-date { color: #aaa; margin-left: 6px; }
+  .version-entry ul { margin: 4px 0 0 16px; }
+  .version-entry li { margin-bottom: 2px; }
+  .filter-value-search:focus { outline: none; border-color: #3b82f6; }
+  .filter-value-list { margin-top: 8px; max-height: 200px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; padding: 6px 8px; background: #fafbfc; }
+  .filter-value-list label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #333; padding: 3px 0; cursor: pointer; }
+  .filter-value-list input[type=checkbox] { cursor: pointer; }
+  .filter-value-empty { font-size: 11px; color: #999; padding: 4px 0; }
+  .filter-value-actions { display: flex; gap: 10px; margin-top: 6px; }
+  .filter-value-actions a { font-size: 11px; color: #3b82f6; cursor: pointer; text-decoration: underline; }
+
+  .no-filters-note { font-size: 12px; color: #999; padding: 4px 0; }
+
+  .run-btn { width: 100%; padding: 11px; font-size: 14px; font-weight: 600; border: none; border-radius: 8px; background: #11263b; color: #fff; cursor: pointer; transition: background-color 0.25s, opacity 0.15s; margin-bottom: 1.5rem; }
+  .run-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .run-btn:not(:disabled):hover { opacity: 0.85; }
+  .run-btn.success { background: #16a34a; }
+
+  .note { font-size: 12px; color: #555; background: #e8edf3; border-radius: 8px; padding: 8px 12px; margin-bottom: 1rem; border-left: 3px solid #ccc; }
+  .note.ok { border-color: #16a34a; background: #f0fdf4; color: #15803d; }
+  .note.warn { border-color: #d97706; background: #fffbeb; color: #92400e; }
+  .note.err { border-color: #dc2626; background: #fef2f2; color: #991b1b; }
+
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 1.5rem; }
+  .metric-card { background: #fff; border-radius: 8px; padding: 0.9rem 1rem; border: 1px solid #e5e5e5; }
+  .metric-label { font-size: 11px; color: #888; margin-bottom: 6px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
+  .metric-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+  .metric-source { font-size: 10px; color: #aaa; }
+  .metric-val { font-size: 14px; font-weight: 600; color: #1a1a1a; }
+  .metric-diff { font-size: 11px; margin-top: 5px; font-weight: 500; padding-top: 5px; border-top: 1px solid #f0f0ee; }
+  .diff-ok { color: #16a34a; }
+  .diff-err { color: #dc2626; }
+
+  .section-title { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 0.6rem; }
+
+  .filter-row { display: flex; gap: 8px; margin-bottom: 0.75rem; flex-wrap: wrap; align-items: center; }
+  .filter-row select { font-size: 12px; padding: 5px 8px; border-radius: 6px; border: 1px solid #ddd; background: #fff; color: #1a1a1a; }
+  .filter-row label { font-size: 12px; color: #555; display: flex; align-items: center; gap: 5px; cursor: pointer; }
+
+  .table-wrap { overflow-x: auto; max-height: 500px; overflow-y: auto; border: 1px solid #e5e5e5; border-radius: 8px; background: #fff; }
+  table { border-collapse: collapse; font-size: 11px; table-layout: auto; min-width: 100%; }
+  thead { position: sticky; top: 0; z-index: 2; }
+  th { background: #f4f6f9; color: #555; font-weight: 600; padding: 6px 8px; text-align: right; border-bottom: 1px solid #e5e5e5; white-space: nowrap; }
+  th.left { text-align: left; }
+  th.group-header { text-align: center; border-left: 2px solid #ddd; border-bottom: 1px solid #e5e5e5; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #888; background: #e8edf3; }
+  th.sub { font-size: 10px; border-left: 1px solid #eee; }
+  th.sub-first { border-left: 2px solid #ddd; }
+  td { padding: 5px 8px; border-bottom: 1px solid #f0f0ee; text-align: right; vertical-align: middle; white-space: nowrap; }
+  td.left { text-align: left; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+  td.sep { border-left: 2px solid #ddd; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fafaf8; }
+
+  .badge { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 600; }
+  .badge-ok { background: #dcfce7; color: #15803d; }
+  .badge-err { background: #fee2e2; color: #991b1b; }
+  .badge-missing { background: #f1f5f9; color: #64748b; }
+
+  .c-ok { color: #16a34a; font-weight: 600; }
+  .c-err { color: #dc2626; font-weight: 600; }
+  .c-neutral { color: #888; }
+  .muted { color: #999; }
+
+  .empty { text-align: center; color: #aaa; padding: 2rem; }
+  #results { display: none; }
+
+  .export-row { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 0.5rem; gap: 14px; }
+  .reset-links { display: flex; gap: 14px; margin-right: auto; }
+  .export-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #333; cursor: pointer; }
+  .export-btn:hover { background: #f4f6f9; }
+  .reset-link { font-size: 12px; color: #555; cursor: pointer; padding: 5px 12px; border: 1px solid #ddd; border-radius: 6px; background: #fff; font-weight: 500; transition: all 0.15s; }
+  .reset-link:hover { background: #f4f6f9; border-color: #bbb; }
+  .reset-link.danger { color: #b45309; border-color: #fbbf24; background: #fffbeb; }
+  .reset-link.danger:hover { background: #fef3c7; border-color: #d97706; }
+  .sheet-picker { margin-top: 8px; }
+  .sheet-picker select { width: 100%; font-size: 12px; padding: 5px 8px; border-radius: 6px; border: 1px solid #ddd; background: #fff; }
+  .sheet-picker-label { font-size: 10px; color: #888; margin-bottom: 3px; display: block; }
+
+  .file-meta { font-size: 11px; color: #888; margin-top: 4px; }
+  .parse-error { font-size: 11px; color: #dc2626; margin-top: 6px; font-weight: 500; }
+
+  .data-quality-note { font-size: 11px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px 10px; margin-top: 8px; }
+
+  .row-count-bar { font-size: 11px; color: #888; margin-bottom: 1rem; display: flex; gap: 16px; }
+  .row-count-bar strong { color: #11263b; }
+
+  .help-box { font-size: 12px; color: #555; background: #f8fafc; border: 1px solid #e8edf3; border-radius: 8px; padding: 10px 14px; margin-bottom: 1rem; line-height: 1.5; }
+  .help-box code { background: #fff; padding: 1px 5px; border-radius: 4px; border: 1px solid #e5e5e5; font-size: 11px; }
+
+
+  @media (max-width: 540px) {
+    .page { padding: 1.25rem 1rem; }
+    .upload-grid { grid-template-columns: 1fr; }
+    .map-row { grid-template-columns: 1fr; gap: 4px; }
+    .metric-row-wrap .map-row { grid-template-columns: 1fr; }
+    .metric-threshold-line { padding-left: 0; flex-direction: column; align-items: flex-start; gap: 8px; }
+    .map-arrow { display: none; }
+    .summary-grid { grid-template-columns: 1fr 1fr; }
+    .config-row { flex-direction: column; align-items: flex-start; }
+    .export-row { flex-direction: column; align-items: stretch; gap: 8px; }
+    .reset-links { margin-right: 0; justify-content: stretch; }
+    .reset-link, .export-btn { text-align: center; flex: 1; }
+    th, td { font-size: 10px; padding: 4px 5px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Document QA Tool 2.0 <span class="version-tag" onclick="document.getElementById('version-history').classList.toggle('open')">v7 — version history ▾</span></h1>
+  <p class="subtitle">Compare any two data sources, flag mismatches, and export discrepancies. Works with any column structure.<br>Created by Ashley Garnier</p>
+
+  <div class="version-history" id="version-history">
+    <h3>Version History</h3>
+    <div class="version-entry">
+      <span class="v-num">v7</span><span class="v-date">Current</span>
+      <ul>
+        <li>Search box in filter value list for columns with many unique values</li>
+        <li>Large file crash fix — parsing moved to a Web Worker (off main thread) with progress bar</li>
+        <li>Fixed "Sheet appears to be empty" false error on valid xlsx files</li>
+      </ul>
+    </div>
+    <div class="version-entry">
+      <span class="v-num">v6</span>
+      <ul>
+        <li>Filter value picker converted to auto-populated checkboxes (no free typing)</li>
+        <li>Select all / Clear shortcuts for filter checkboxes</li>
+      </ul>
+    </div>
+    <div class="version-entry">
+      <span class="v-num">v5</span>
+      <ul>
+        <li>Row-level filters (Step 2) — per file, keep-only or exclude by column value</li>
+        <li>Filter rules included in save/load mapping</li>
+        <li>Row count bar shows how many rows were filtered out</li>
+      </ul>
+    </div>
+    <div class="version-entry">
+      <span class="v-num">v4</span>
+      <ul>
+        <li>Per-metric variance thresholds (% and absolute count, either-or)</li>
+        <li>Results table shows both Δ and Δ% per metric</li>
+        <li>Threshold labels visible in summary cards and table headers</li>
+      </ul>
+    </div>
+    <div class="version-entry">
+      <span class="v-num">v3</span>
+      <ul>
+        <li>Save / load column mapping as JSON</li>
+        <li>Rows existing only in Source B now flagged as "extra" (reverse-missing detection)</li>
+        <li>Non-numeric metric values flagged by name instead of silently becoming 0</li>
+        <li>Multi-sheet workbook support with sheet picker</li>
+        <li>Row count bar (rows parsed, rows matched)</li>
+        <li>In-tool instructions and mobile layout</li>
+      </ul>
+    </div>
+    <div class="version-entry">
+      <span class="v-num">v2</span>
+      <ul>
+        <li>Dynamic column mapping UI (any column structure, not GWL-specific)</li>
+        <li>Configurable match keys and metrics</li>
+        <li>CSV + xlsx support</li>
+        <li>Status badges, filters, CSV export</li>
+        <li>✕ Clear results and ↺ Start over buttons</li>
+        <li>Run QA success flash</li>
+      </ul>
+    </div>
+    <div class="version-entry">
+      <span class="v-num">v1</span>
+      <ul>
+        <li>Original GWL-specific Swivel vs. Client Tableau QA tool</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="help-box">
+    <strong>How it works:</strong> upload two files (any spreadsheet — they don't need matching column names), tell the tool which columns identify a matching row (e.g. <code>ID</code> or <code>Name + Date</code>) and which numeric columns to compare, then run. Rows are matched by your key columns and flagged if the numbers differ by more than your threshold.
+  </div>
+
+  <!-- STEP 1: Upload -->
+  <div class="step" id="step-upload">
+    <div class="step-title"><span class="step-num">1</span> Upload your two files</div>
+    <div class="upload-grid">
+      <div>
+        <input type="text" class="source-label-input" id="label-a" value="Source A" placeholder="Name this source (e.g. Internal Report)">
+        <div class="drop-zone" id="zone-a" onclick="document.getElementById('inp-a').click()">
+          <div class="drop-icon">📋</div>
+          <div class="drop-title">Drop file here or click to browse</div>
+          <div class="drop-sub">.xlsx or .csv · recommended limit ~100K rows</div>
+          <div class="file-name" id="fn-a"></div>
+        </div>
+        <input type="file" id="inp-a" accept=".xlsx,.csv" style="display:none">
+        <div class="sheet-picker" id="sheet-picker-a" style="display:none">
+          <span class="sheet-picker-label">This file has multiple sheets — which one has your data?</span>
+          <select id="sheet-select-a" onchange="onSheetChange('a')"></select>
+        </div>
+        <div class="file-meta" id="meta-a"></div>
+        <div class="parse-error" id="err-a"></div>
+      </div>
+      <div>
+        <input type="text" class="source-label-input" id="label-b" value="Source B" placeholder="Name this source (e.g. Vendor Export)">
+        <div class="drop-zone" id="zone-b" onclick="document.getElementById('inp-b').click()">
+          <div class="drop-icon">📊</div>
+          <div class="drop-title">Drop file here or click to browse</div>
+          <div class="drop-sub">.xlsx or .csv · recommended limit ~100K rows</div>
+          <div class="file-name" id="fn-b"></div>
+        </div>
+        <input type="file" id="inp-b" accept=".xlsx,.csv" style="display:none">
+        <div class="sheet-picker" id="sheet-picker-b" style="display:none">
+          <span class="sheet-picker-label">This file has multiple sheets — which one has your data?</span>
+          <select id="sheet-select-b" onchange="onSheetChange('b')"></select>
+        </div>
+        <div class="file-meta" id="meta-b"></div>
+        <div class="parse-error" id="err-b"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2: Filter rows (optional) -->
+  <div class="step disabled" id="step-filter">
+    <div class="step-title"><span class="step-num">2</span> Filter rows (optional)</div>
+    <p class="config-hint" style="margin-bottom: 0.75rem;">Only want to compare part of each file? e.g. Report A is Display-only, but Report B has SEM, Social, and Display mixed together — filter Report B down to Display before matching. Filters apply before any column mapping or comparison.</p>
+
+    <div class="filter-block">
+      <div class="filter-block-title" id="filter-label-a">Filters for Source A</div>
+      <div id="filter-rules-a"></div>
+      <button class="add-row-btn" onclick="addFilterRule('a')">+ Add filter</button>
+    </div>
+
+    <div class="filter-block">
+      <div class="filter-block-title" id="filter-label-b">Filters for Source B</div>
+      <div id="filter-rules-b"></div>
+      <button class="add-row-btn" onclick="addFilterRule('b')">+ Add filter</button>
+    </div>
+  </div>
+
+  <!-- STEP 3: Map columns -->
+  <div class="step disabled" id="step-map">
+    <div class="step-title"><span class="step-num">3</span> Map your columns</div>
+
+    <div class="mapping-io-row">
+      <button class="mapping-io-btn" onclick="document.getElementById('inp-load-mapping').click()">📂 Load saved mapping</button>
+      <input type="file" id="inp-load-mapping" accept=".json" style="display:none">
+      <button class="mapping-io-btn" id="save-mapping-btn" onclick="saveMapping()">💾 Save this mapping</button>
+      <span class="mapping-io-hint" id="mapping-loaded-tag"></span>
+    </div>
+
+    <div class="map-section-label">Match key — rows are compared when these columns are equal (e.g. ID, Name, Date)</div>
+    <div id="key-rows"></div>
+    <button class="add-row-btn" onclick="addKeyRow()">+ Add key field</button>
+
+    <div class="map-section-label">Metrics to compare — numeric columns to total and diff. Set your own variance threshold per metric.</div>
+    <div id="metric-rows"></div>
+    <button class="add-row-btn" onclick="addMetricRow()">+ Add metric</button>
+
+    <div class="config-row">
+      <div class="config-field">
+        <label>Default threshold</label>
+        <input type="number" id="cfg-threshold" value="2" min="0" step="0.5">
+        <span class="config-hint">starting % for new metrics — each metric above can be tuned individually</span>
+      </div>
+    </div>
+  </div>
+
+  <button class="run-btn" id="run-btn" disabled>Run QA ▶</button>
+
+  <div id="results">
+    <div class="note" id="note-text"></div>
+    <div class="row-count-bar" id="row-count-bar"></div>
+
+    <div class="summary-grid" id="summary-grid"></div>
+
+    <div class="section-title">Row-level detail</div>
+    <div class="filter-row" id="dynamic-filters"></div>
+    <div class="export-row">
+      <div class="reset-links">
+        <span class="reset-link" onclick="clearResults()" title="Clears the results table below, but keeps your uploaded files and column mapping so you can change settings and run again">✕ Clear results</span>
+        <span class="reset-link danger" onclick="location.reload()" title="Resets everything — files, column mapping, and results — back to the upload step">↺ Start over</span>
+      </div>
+      <button class="export-btn" onclick="exportCSV()">Export to CSV</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead id="table-head"></thead>
+        <tbody id="detail-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+let rawA = null, rawB = null, headersA = [], headersB = [];
+let nonNumericIssuesA = [], nonNumericIssuesB = [];
+let mergedRows = [];
+let keyFieldCount = 0, metricFieldCount = 0;
+
+// ---------- File loading ----------
+function setupDrop(zoneId, inputId, fnId, side) {
+  const zone = document.getElementById(zoneId);
+  const inp = document.getElementById(inputId);
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('over');
+    if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0], zoneId, fnId, side);
+  });
+  inp.addEventListener('change', () => { if (inp.files[0]) readFile(inp.files[0], zoneId, fnId, side); });
+}
+
+function readFile(file, zoneId, fnId, side) {
+  document.getElementById(fnId).textContent = file.name;
+  document.getElementById(zoneId).classList.add('loaded');
+  document.getElementById('err-' + side).textContent = '';
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      if (!wb.SheetNames || wb.SheetNames.length === 0) throw new Error('No sheets found in this file.');
+
+      const picker = document.getElementById('sheet-picker-' + side);
+      const select = document.getElementById('sheet-select-' + side);
+      if (wb.SheetNames.length > 1) {
+        select.innerHTML = wb.SheetNames.map((s, i) => `<option value="${i}">${s}</option>`).join('');
+        picker.style.display = 'block';
+      } else {
+        picker.style.display = 'none';
+      }
+      // Store workbook for sheet switching, then parse the first sheet
+      if (side === 'a') window._wbA = wb; else window._wbB = wb;
+      loadSheet(side, 0);
+    } catch (err) {
+      document.getElementById('err-' + side).textContent = `Couldn't read this file: ${err.message}`;
+      document.getElementById(zoneId).classList.remove('loaded');
+    }
+  };
+  reader.onerror = () => {
+    document.getElementById('err-' + side).textContent = 'Couldn\'t read this file from disk. Try re-uploading it.';
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function onSheetChange(side) {
+  const idx = parseInt(document.getElementById('sheet-select-' + side).value);
+  loadSheet(side, idx);
+}
+
+function loadSheet(side, sheetIdx) {
+  const errEl = document.getElementById('err-' + side);
+  const metaEl = document.getElementById('meta-' + side);
+  errEl.textContent = '';
+  metaEl.textContent = '';
+  try {
+    const wb = side === 'a' ? window._wbA : window._wbB;
+    const sheetName = wb.SheetNames[sheetIdx];
+    const ws = wb.Sheets[sheetName];
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    if (!aoa || aoa.length === 0) throw new Error(`The sheet "${sheetName}" appears to be empty.`);
+    const parsed = parseToObjects(aoa);
+    if (parsed.headers.length === 0 || parsed.rows.length === 0) {
+      throw new Error(`Couldn't find a usable header row in "${sheetName}". If this file has title rows or merged cells above the table, try removing them and re-uploading.`);
+    }
+    if (side === 'a') { headersA = parsed.headers; rawA = parsed.rows; }
+    else { headersB = parsed.headers; rawB = parsed.rows; }
+    const limitNote = parsed.rows.length > 100000 ? ' — large file, may be slow' : '';
+    metaEl.textContent = `${parsed.rows.length.toLocaleString()} data rows, ${parsed.headers.length} columns detected${limitNote}.`;
+    checkBothLoaded();
+  } catch (err) {
+    errEl.textContent = err.message;
+    metaEl.textContent = '';
+    if (side === 'a') { rawA = null; } else { rawB = null; }
+  }
+}
+
+// Find the most plausible header row: the row with the most non-empty string cells
+// in the first 15 rows. This avoids assuming row 1 is always the header.
+function findHeaderRow(aoa) {
+  let bestIdx = 0, bestScore = -1;
+  const scanLimit = Math.min(aoa.length, 15);
+  for (let i = 0; i < scanLimit; i++) {
+    const row = aoa[i];
+    const nonEmptyStrings = row.filter(c => typeof c === 'string' && c.trim() !== '').length;
+    if (nonEmptyStrings > bestScore) { bestScore = nonEmptyStrings; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+function parseToObjects(aoa) {
+  if (!aoa || aoa.length === 0) return { headers: [], rows: [] };
+  const headerIdx = findHeaderRow(aoa);
+  const headerRow = aoa[headerIdx];
+  if (!headerRow) return { headers: [], rows: [] };
+  const headers = headerRow.map(h => String(h).trim()).filter(h => h !== '');
+  if (headers.length === 0) return { headers: [], rows: [] };
+  const fullHeaders = headerRow.map(h => String(h).trim());
+  const dataRows = aoa.slice(headerIdx + 1).filter(row => row.some(c => String(c).trim() !== ''));
+  const rows = dataRows.map(row => {
+    const obj = {};
+    fullHeaders.forEach((h, i) => { if (h !== '') obj[h] = row[i] !== undefined ? row[i] : ''; });
+    return obj;
+  });
+  return { headers, rows };
+}
+
+setupDrop('zone-a', 'inp-a', 'fn-a', 'a');
+setupDrop('zone-b', 'inp-b', 'fn-b', 'b');
+
+function checkBothLoaded() {
+  if (rawA && rawB) {
+    document.getElementById('step-filter').classList.remove('disabled');
+    document.getElementById('step-map').classList.remove('disabled');
+    buildFilterUI();
+    buildMappingUI();
+  }
+}
+
+// ---------- Filter UI ----------
+let filterFieldCount = { a: 0, b: 0 };
+
+function buildFilterUI() {
+  document.getElementById('filter-label-a').textContent = `Filters for ${document.getElementById('label-a').value || 'Source A'}`;
+  document.getElementById('filter-label-b').textContent = `Filters for ${document.getElementById('label-b').value || 'Source B'}`;
+  document.getElementById('filter-rules-a').innerHTML = '';
+  document.getElementById('filter-rules-b').innerHTML = '';
+  filterFieldCount = { a: 0, b: 0 };
+}
+
+function addFilterRule(side) {
+  filterFieldCount[side]++;
+  const id = `filter-${side}-${filterFieldCount[side]}`;
+  const headers = side === 'a' ? headersA : headersB;
+  const div = document.createElement('div');
+  div.className = 'filter-rule';
+  div.id = id;
+  div.innerHTML = `
+    <div class="filter-rule-top">
+      <select class="filter-col" onchange="onFilterColumnChange('${side}', '${id}')">${colOptions(headers)}</select>
+      <select class="filter-mode">
+        <option value="keep">Keep only</option>
+        <option value="exclude">Exclude</option>
+      </select>
+      <button class="remove-row-btn" onclick="document.getElementById('${id}').remove(); refreshRunButtonState();">✕</button>
+    </div>
+    <div class="filter-value-list" data-side="${side}">
+      <div class="filter-value-empty">Pick a column above to see its values</div>
+    </div>
+  `;
+  document.getElementById('filter-rules-' + side).appendChild(div);
+}
+
+// Returns the unique, non-blank values found in a column, in the order they first
+// appear (rather than alphabetized) so something like a status column still reads naturally.
+function uniqueColumnValues(rows, column) {
+  const seen = new Set();
+  const values = [];
+  rows.forEach(r => {
+    const v = String(r[column] ?? '').trim();
+    if (v !== '' && !seen.has(v.toLowerCase())) {
+      seen.add(v.toLowerCase());
+      values.push(v);
+    }
+  });
+  return values;
+}
+
+function onFilterColumnChange(side, ruleId) {
+  const row = document.getElementById(ruleId);
+  const column = row.querySelector('.filter-col').value;
+  const listEl = row.querySelector('.filter-value-list');
+  if (!column) {
+    listEl.innerHTML = `<div class="filter-value-empty">Pick a column above to see its values</div>`;
+    refreshRunButtonState();
+    return;
+  }
+  const rawRows = side === 'a' ? rawA : rawB;
+  const values = uniqueColumnValues(rawRows, column);
+  if (values.length === 0) {
+    listEl.innerHTML = `<div class="filter-value-empty">No values found in this column.</div>`;
+    refreshRunButtonState();
+    return;
+  }
+
+  // Build the checkbox list. The search box lives above the scrollable list and
+  // filters in real time by hiding non-matching labels — checked state is preserved.
+  const checkboxesId = `${ruleId}-cbs`;
+  listEl.innerHTML =
+    (values.length > 8 ? `<input type="text" class="filter-value-search" placeholder="Search values…" oninput="filterValueSearch(this, '${checkboxesId}')">` : '') +
+    `<div id="${checkboxesId}">` +
+    values.map(v => `<label><input type="checkbox" class="filter-value-cb" value="${v.replace(/"/g, '&quot;')}"> ${v}</label>`).join('') +
+    `</div>` +
+    `<div class="filter-value-actions"><a onclick="toggleAllFilterValues('${ruleId}', true)">Select all</a><a onclick="toggleAllFilterValues('${ruleId}', false)">Clear</a></div>`;
+  refreshRunButtonState();
+}
+
+// Filters the visible checkbox labels as the user types. Only hides labels visually —
+// checked state is preserved so items checked before searching stay checked even if
+// they disappear from view.
+function filterValueSearch(input, checkboxesId) {
+  const term = input.value.toLowerCase();
+  document.querySelectorAll(`#${checkboxesId} label`).forEach(label => {
+    const text = label.textContent.trim().toLowerCase();
+    label.style.display = text.includes(term) ? '' : 'none';
+  });
+}
+
+function toggleAllFilterValues(ruleId, checked) {
+  // Only toggle what's currently visible (respects search filter)
+  document.querySelectorAll(`#${ruleId} label`).forEach(label => {
+    if (label.style.display !== 'none') {
+      label.querySelector('input[type=checkbox]').checked = checked;
+    }
+  });
+}
+
+function getFilterRules(side) {
+  return [...document.querySelectorAll(`#filter-rules-${side} .filter-rule`)].map(row => {
+    const column = row.querySelector('.filter-col').value;
+    const mode = row.querySelector('.filter-mode').value;
+    const values = [...row.querySelectorAll('.filter-value-cb:checked')].map(cb => cb.value.toLowerCase());
+    return { column, mode, values };
+  }).filter(r => r.column && r.values.length > 0);
+}
+
+// Applies a side's filter rules to its raw rows. Multiple rules combine with AND
+// (a row must pass every rule to remain). Comparison is case-insensitive on the
+// trimmed cell value.
+function applyFilters(rows, rules) {
+  if (rules.length === 0) return rows;
+  return rows.filter(row => rules.every(rule => {
+    const cellVal = String(row[rule.column] ?? '').trim().toLowerCase();
+    const matches = rule.values.includes(cellVal);
+    return rule.mode === 'keep' ? matches : !matches;
+  }));
+}
+
+// ---------- Mapping UI ----------
+function colOptions(headers, selected) {
+  return '<option value="">— Select column —</option>' + headers.map(h =>
+    `<option value="${h}" ${h === selected ? 'selected' : ''}>${h}</option>`).join('');
+}
+
+function guessMatch(headersA, headersB, target) {
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const t = norm(target);
+  const exactA = headersA.find(h => norm(h) === t);
+  const exactB = headersB.find(h => norm(h) === t);
+  return { a: exactA || '', b: exactB || '' };
+}
+
+function buildMappingUI() {
+  document.getElementById('key-rows').innerHTML = '';
+  document.getElementById('metric-rows').innerHTML = '';
+  keyFieldCount = 0; metricFieldCount = 0;
+  addKeyRow();
+  addMetricRow();
+  refreshRunButtonState();
+}
+
+function addKeyRow() {
+  keyFieldCount++;
+  const id = 'key-' + keyFieldCount;
+  const div = document.createElement('div');
+  div.className = 'map-row';
+  div.id = id;
+  div.innerHTML = `
+    <span class="map-label">Key field ${keyFieldCount}</span>
+    <select class="key-a" onchange="refreshRunButtonState()">${colOptions(headersA)}</select>
+    <span class="map-arrow">↔</span>
+    <select class="key-b" onchange="refreshRunButtonState()">${colOptions(headersB)}</select>
+  `;
+  document.getElementById('key-rows').appendChild(div);
+}
+
+function addMetricRow() {
+  metricFieldCount++;
+  const id = 'metric-' + metricFieldCount;
+  const div = document.createElement('div');
+  div.className = 'metric-row-wrap';
+  div.id = id;
+  const defaultThreshold = document.getElementById('cfg-threshold')?.value || 2;
+  div.innerHTML = `
+    <div class="map-row">
+      <input type="text" class="metric-name" placeholder="Label (e.g. Spend)" value="Metric ${metricFieldCount}">
+      <select class="metric-a" onchange="refreshRunButtonState()">${colOptions(headersA)}</select>
+      <span class="map-arrow">↔</span>
+      <select class="metric-b" onchange="refreshRunButtonState()">${colOptions(headersB)}</select>
+      <button class="remove-row-btn" onclick="document.getElementById('${id}').remove(); refreshRunButtonState();">✕</button>
+    </div>
+    <div class="metric-threshold-line">
+      <span class="metric-threshold-group">
+        <label>Flag if off by more than</label>
+        <input type="number" class="metric-threshold-pct" value="${defaultThreshold}" min="0" step="0.5" title="Percent difference threshold">
+        <span class="unit">%</span>
+      </span>
+      <span class="metric-threshold-or">or</span>
+      <span class="metric-threshold-group">
+        <input type="number" class="metric-threshold-count" value="" min="0" step="1" placeholder="—" title="Absolute count/amount difference threshold">
+        <span class="unit">units (optional)</span>
+      </span>
+    </div>
+  `;
+  document.getElementById('metric-rows').appendChild(div);
+}
+
+function getKeyMappings() {
+  return [...document.querySelectorAll('#key-rows .map-row')].map(row => ({
+    a: row.querySelector('.key-a').value,
+    b: row.querySelector('.key-b').value
+  })).filter(k => k.a && k.b);
+}
+
+function getMetricMappings() {
+  return [...document.querySelectorAll('#metric-rows .metric-row-wrap')].map(wrap => {
+    const countRaw = wrap.querySelector('.metric-threshold-count').value;
+    return {
+      label: wrap.querySelector('.metric-name').value.trim() || 'Metric',
+      a: wrap.querySelector('.metric-a').value,
+      b: wrap.querySelector('.metric-b').value,
+      thresholdPct: parseFloat(wrap.querySelector('.metric-threshold-pct').value) || 0,
+      thresholdCount: countRaw === '' ? null : (parseFloat(countRaw) || 0)
+    };
+  }).filter(m => m.a && m.b);
+}
+
+function refreshRunButtonState() {
+  const keys = getKeyMappings();
+  const metrics = getMetricMappings();
+  document.getElementById('run-btn').disabled = !(keys.length > 0 && metrics.length > 0);
+}
+
+// ---------- Save / load mapping ----------
+function saveMapping() {
+  const keys = [...document.querySelectorAll('#key-rows .map-row')].map(row => ({
+    a: row.querySelector('.key-a').value,
+    b: row.querySelector('.key-b').value
+  }));
+  const metrics = [...document.querySelectorAll('#metric-rows .metric-row-wrap')].map(wrap => ({
+    label: wrap.querySelector('.metric-name').value,
+    a: wrap.querySelector('.metric-a').value,
+    b: wrap.querySelector('.metric-b').value,
+    thresholdPct: wrap.querySelector('.metric-threshold-pct').value,
+    thresholdCount: wrap.querySelector('.metric-threshold-count').value
+  }));
+  const filtersA = [...document.querySelectorAll('#filter-rules-a .filter-rule')].map(row => ({
+    column: row.querySelector('.filter-col').value,
+    mode: row.querySelector('.filter-mode').value,
+    values: [...row.querySelectorAll('.filter-value-cb:checked')].map(cb => cb.value)
+  }));
+  const filtersB = [...document.querySelectorAll('#filter-rules-b .filter-rule')].map(row => ({
+    column: row.querySelector('.filter-col').value,
+    mode: row.querySelector('.filter-mode').value,
+    values: [...row.querySelectorAll('.filter-value-cb:checked')].map(cb => cb.value)
+  }));
+  const config = {
+    _type: 'datamatch-qa-mapping',
+    _version: 5,
+    sourceLabelA: document.getElementById('label-a').value,
+    sourceLabelB: document.getElementById('label-b').value,
+    threshold: document.getElementById('cfg-threshold').value,
+    keyMappings: keys,
+    metricMappings: metrics,
+    filtersA: filtersA,
+    filtersB: filtersB
+  };
+  const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const namePart = (config.sourceLabelA + '_vs_' + config.sourceLabelB).replace(/[^a-z0-9]+/gi, '_');
+  a.download = `mapping_${namePart}.json`;
+  a.click();
+}
+
+document.getElementById('inp-load-mapping').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const config = JSON.parse(ev.target.result);
+      if (config._type !== 'datamatch-qa-mapping') throw new Error('Not a recognized mapping file.');
+      applyLoadedMapping(config);
+    } catch (err) {
+      alert('Could not load this mapping file: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+});
+
+// Matches a saved column name against the currently loaded file's headers.
+// Falls back to blank (unmapped) if the column no longer exists, so the user
+// can see what needs re-mapping rather than silently mismatching.
+function resolveColumn(savedName, currentHeaders) {
+  return currentHeaders.includes(savedName) ? savedName : '';
+}
+
+// Rebuilds one side's filter rules from a saved mapping. Populates the checkbox
+// list from the CURRENT file's actual values (not the old saved list, since the
+// new upload may have different/additional values), then checks whichever saved
+// values still exist. v4 mapping files stored values as a comma-separated string
+// instead of an array — that's normalized here too.
+function restoreFilterSide(side, filters, headers) {
+  filters.forEach(f => {
+    addFilterRule(side);
+    const id = `filter-${side}-${filterFieldCount[side]}`;
+    const row = document.getElementById(id);
+    const resolvedCol = resolveColumn(f.column, headers);
+    row.querySelector('.filter-col').value = resolvedCol;
+    row.querySelector('.filter-mode').value = f.mode || 'keep';
+    if (resolvedCol) {
+      onFilterColumnChange(side, id);
+      const savedValues = Array.isArray(f.values)
+        ? f.values.map(v => v.toLowerCase())
+        : String(f.values || '').split(',').map(v => v.trim().toLowerCase()).filter(v => v !== '');
+      row.querySelectorAll('.filter-value-cb').forEach(cb => {
+        if (savedValues.includes(cb.value.toLowerCase())) cb.checked = true;
+      });
+    }
+  });
+}
+
+function applyLoadedMapping(config) {
+  if (!rawA || !rawB) {
+    alert('Upload both files first, then load the mapping — column lists need to be available to match against.');
+    return;
+  }
+  document.getElementById('label-a').value = config.sourceLabelA || 'Source A';
+  document.getElementById('label-b').value = config.sourceLabelB || 'Source B';
+  document.getElementById('cfg-threshold').value = config.threshold ?? 2;
+
+  document.getElementById('key-rows').innerHTML = '';
+  keyFieldCount = 0;
+  (config.keyMappings || []).forEach(k => {
+    addKeyRow();
+    const row = document.getElementById('key-' + keyFieldCount);
+    row.querySelector('.key-a').value = resolveColumn(k.a, headersA);
+    row.querySelector('.key-b').value = resolveColumn(k.b, headersB);
+  });
+  if (keyFieldCount === 0) addKeyRow();
+
+  document.getElementById('metric-rows').innerHTML = '';
+  metricFieldCount = 0;
+  (config.metricMappings || []).forEach(m => {
+    addMetricRow();
+    const row = document.getElementById('metric-' + metricFieldCount);
+    row.querySelector('.metric-name').value = m.label || ('Metric ' + metricFieldCount);
+    row.querySelector('.metric-a').value = resolveColumn(m.a, headersA);
+    row.querySelector('.metric-b').value = resolveColumn(m.b, headersB);
+    // v1/v2 mapping files only had a single "threshold" (percent) field per metric.
+    // v3 added a separate count threshold. Fall back gracefully either way.
+    const pct = m.thresholdPct ?? m.threshold ?? config.threshold ?? 2;
+    row.querySelector('.metric-threshold-pct').value = pct;
+    row.querySelector('.metric-threshold-count').value = m.thresholdCount ?? '';
+  });
+  if (metricFieldCount === 0) addMetricRow();
+
+  // Filters were added in v4 — older mapping files simply won't have filtersA/filtersB,
+  // so this safely results in no filters rather than an error.
+  document.getElementById('filter-rules-a').innerHTML = '';
+  document.getElementById('filter-rules-b').innerHTML = '';
+  filterFieldCount = { a: 0, b: 0 };
+  restoreFilterSide('a', config.filtersA || [], headersA);
+  restoreFilterSide('b', config.filtersB || [], headersB);
+
+  const unresolved = [...document.querySelectorAll('#key-rows select, #metric-rows select')]
+    .filter(s => s.value === '').length;
+  const tag = document.getElementById('mapping-loaded-tag');
+  if (unresolved > 0) {
+    tag.textContent = `Mapping loaded — ${unresolved} field(s) couldn't be matched to a column in these files and need re-selecting.`;
+    tag.style.color = '#92400e';
+  } else {
+    tag.textContent = 'Mapping loaded and fully matched to these files.';
+    tag.style.color = '#16a34a';
+  }
+  refreshRunButtonState();
+}
+
+document.getElementById('run-btn').addEventListener('click', runQA);
+
+// ---------- QA engine ----------
+let keyMappings = [], metricMappings = [];
+let labelA = 'Source A', labelB = 'Source B';
+
+function buildKey(obj, mappings, side) {
+  return mappings.map(m => String(obj[m[side]] ?? '').trim()).join('|||');
+}
+
+// Returns a number for valid numeric-looking values (including blank/empty treated as 0),
+// or null if the value is genuinely non-numeric text that got coerced to 0 silently before.
+function safeParseMetric(raw) {
+  if (raw === '' || raw === null || raw === undefined) return 0;
+  if (typeof raw === 'number') return raw;
+  const cleaned = String(raw).replace(/[$,%\s]/g, '');
+  if (cleaned === '' || cleaned === '-') return 0;
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? null : n;
+}
+
+// A row is flagged for a given metric if it crosses EITHER the percent threshold
+// OR the absolute count threshold (when one is set). This catches both "small base,
+// big relative swing" cases and "big base, small % but meaningfully large absolute swing" cases.
+function exceedsThreshold(aVal, bVal, metric) {
+  const diff = Math.abs(aVal - bVal);
+  const pct = aVal === 0 ? (bVal === 0 ? 0 : 100) : (diff / Math.abs(aVal)) * 100;
+  const overPct = pct > metric.thresholdPct;
+  const overCount = metric.thresholdCount !== null && metric.thresholdCount !== undefined && diff > metric.thresholdCount;
+  return overPct || overCount;
+}
+
+function pctDiffFor(aVal, bVal) {
+  const diff = Math.abs(aVal - bVal);
+  return aVal === 0 ? (bVal === 0 ? 0 : 100) : (diff / Math.abs(aVal)) * 100;
+}
+
+function runQA() {
+  keyMappings = getKeyMappings();
+  metricMappings = getMetricMappings();
+  labelA = document.getElementById('label-a').value.trim() || 'Source A';
+  labelB = document.getElementById('label-b').value.trim() || 'Source B';
+
+  const filteredA = applyFilters(rawA, getFilterRules('a'));
+  const filteredB = applyFilters(rawB, getFilterRules('b'));
+  const excludedA = rawA.length - filteredA.length;
+  const excludedB = rawB.length - filteredB.length;
+
+  // Track any non-numeric values found in metric columns so we can warn rather than
+  // silently treat them as 0.
+  const badValues = []; // { side, label, value, rowKey }
+
+  function aggregate(rawRows, side) {
+    const agg = {};
+    rawRows.forEach(r => {
+      const key = buildKey(r, keyMappings, side);
+      if (!agg[key]) {
+        agg[key] = { _keyParts: keyMappings.map(m => String(r[m[side]] ?? '').trim()) };
+        metricMappings.forEach(m => agg[key][m.label] = 0);
+      }
+      metricMappings.forEach(m => {
+        const raw = r[m[side]];
+        const parsed = safeParseMetric(raw);
+        if (parsed === null) {
+          badValues.push({ side, label: m.label, value: raw, rowKey: agg[key]._keyParts.join(' / ') });
+        } else {
+          agg[key][m.label] += parsed;
+        }
+      });
+    });
+    return agg;
+  }
+
+  const aAgg = aggregate(filteredA, 'a');
+  const bAgg = aggregate(filteredB, 'b');
+
+  const allKeys = new Set([...Object.keys(aAgg), ...Object.keys(bAgg)]);
+
+  mergedRows = [...allKeys].map(key => {
+    const a = aAgg[key];
+    const b = bAgg[key];
+    const row = {
+      keyParts: a ? a._keyParts : b._keyParts,
+      inA: !!a,
+      inB: !!b,
+      metrics: {}
+    };
+    metricMappings.forEach(m => {
+      row.metrics[m.label] = { a: a ? (a[m.label] || 0) : 0, b: b ? (b[m.label] || 0) : 0 };
+    });
+    return row;
+  });
+
+  renderSummary();
+  buildDynamicFilters();
+  buildTableHead();
+  renderTable();
+  renderRowCountBar(badValues, excludedA, excludedB);
+
+  const firstMetric = metricMappings[0];
+  const comparableRows = mergedRows.filter(r => r.inA && r.inB);
+  const totalDiff = Math.abs(comparableRows.reduce((acc, r) => acc + (r.metrics[firstMetric.label].a - r.metrics[firstMetric.label].b), 0));
+  const totalA = Math.abs(comparableRows.reduce((acc, r) => acc + r.metrics[firstMetric.label].a, 0));
+  const totalB = Math.abs(comparableRows.reduce((acc, r) => acc + r.metrics[firstMetric.label].b, 0));
+  const pctDiff = totalA === 0 ? 0 : (totalDiff / totalA) * 100;
+  const noteEl = document.getElementById('note-text');
+  const missingFromB = mergedRows.filter(r => r.inA && !r.inB).length;
+  const missingFromA = mergedRows.filter(r => !r.inA && r.inB).length;
+  const firstMetricOver = exceedsThreshold(totalA, totalB, firstMetric);
+
+  if (!firstMetricOver && missingFromB === 0 && missingFromA === 0) {
+    noteEl.textContent = `${firstMetric.label} matches across both sources within your ${thresholdLabel(firstMetric)} threshold, and every row matched on both sides.`;
+    noteEl.className = 'note ok';
+  } else if (missingFromB > 0 || missingFromA > 0) {
+    const parts = [];
+    if (missingFromB > 0) parts.push(`${missingFromB} row(s) in ${labelA} have no match in ${labelB}`);
+    if (missingFromA > 0) parts.push(`${missingFromA} row(s) in ${labelB} have no match in ${labelA}`);
+    noteEl.textContent = parts.join(', and ') + ' — check the key values on those rows.';
+    noteEl.className = 'note warn';
+  } else {
+    noteEl.textContent = `${firstMetric.label} differs by ${fmtDelta(totalDiff)} (${pctDiff.toFixed(1)}%), above your ${thresholdLabel(firstMetric)} threshold for this metric — review flagged rows below.`;
+    noteEl.className = 'note warn';
+  }
+
+  if (badValues.length > 0) {
+    const sideLabel = s => s === 'a' ? labelA : labelB;
+    const summary = badValues.slice(0, 3).map(b => `"${b.value}" in ${b.label} (${sideLabel(b.side)}, row key ${b.rowKey})`).join('; ');
+    noteEl.textContent += ` Note: ${badValues.length} non-numeric value(s) found in metric columns and excluded from totals — e.g. ${summary}${badValues.length > 3 ? ', and more' : ''}.`;
+    if (noteEl.className === 'note ok') noteEl.className = 'note warn';
+  }
+
+  document.getElementById('results').style.display = 'block';
+  flashRunButton();
+}
+
+// Briefly flashes the Run QA button green so it's obvious the run completed,
+// then fades back to its normal color.
+function flashRunButton() {
+  const btn = document.getElementById('run-btn');
+  const originalText = btn.textContent;
+  btn.classList.add('success');
+  btn.textContent = '✓ QA Complete';
+  setTimeout(() => {
+    btn.classList.remove('success');
+    btn.textContent = originalText;
+  }, 1100);
+}
+
+function renderRowCountBar(badValues, excludedA, excludedB) {
+  const aCount = rawA.length - excludedA;
+  const bCount = rawB.length - excludedB;
+  const matchedCount = mergedRows.filter(r => r.inA && r.inB).length;
+  let html = `<span><strong>${aCount.toLocaleString()}</strong> rows in ${labelA}${excludedA > 0 ? ` (${excludedA} filtered out)` : ''}</span>` +
+              `<span><strong>${bCount.toLocaleString()}</strong> rows in ${labelB}${excludedB > 0 ? ` (${excludedB} filtered out)` : ''}</span>` +
+              `<span><strong>${matchedCount.toLocaleString()}</strong> matched on key</span>`;
+  document.getElementById('row-count-bar').innerHTML = html;
+}
+
+
+// ---------- Formatting ----------
+function fmtNum(n) {
+  n = Math.round(n * 100) / 100;
+  return n.toLocaleString();
+}
+function fmtDelta(n) {
+  n = Math.round(n * 100) / 100;
+  const sign = n > 0 ? '+' : '';
+  return sign + n.toLocaleString();
+}
+function fmtPct(n) {
+  return (Math.round(n * 10) / 10).toFixed(1);
+}
+
+function diffCls(aVal, bVal, metric) {
+  return exceedsThreshold(aVal, bVal, metric) ? 'c-err' : 'c-ok';
+}
+
+function thresholdLabel(m) {
+  return m.thresholdCount !== null && m.thresholdCount !== undefined
+    ? `±${m.thresholdPct}% or ±${fmtNum(m.thresholdCount)}`
+    : `±${m.thresholdPct}%`;
+}
+
+// ---------- Summary cards ----------
+function renderSummary() {
+  document.getElementById('summary-grid').innerHTML = metricMappings.map(m => {
+    const aT = mergedRows.reduce((acc, r) => acc + r.metrics[m.label].a, 0);
+    const bT = mergedRows.reduce((acc, r) => acc + r.metrics[m.label].b, 0);
+    const d = aT - bT;
+    const pct = pctDiffFor(aT, bT);
+    const cls = exceedsThreshold(aT, bT, m) ? 'diff-err' : 'diff-ok';
+    const sign = d > 0 ? '+' : '';
+    return `<div class="metric-card">
+      <div class="metric-label">${m.label} <span style="font-weight:400; color:#bbb;">(${thresholdLabel(m)})</span></div>
+      <div class="metric-row"><span class="metric-source">${labelA}</span><span class="metric-val">${fmtNum(aT)}</span></div>
+      <div class="metric-row"><span class="metric-source">${labelB}</span><span class="metric-val">${fmtNum(bT)}</span></div>
+      <div class="metric-diff ${cls}">${sign}${fmtNum(d)} delta (${pct.toFixed(1)}%)</div>
+    </div>`;
+  }).join('');
+}
+
+// ---------- Row status ----------
+function rowStatus(r) {
+  if (r.inA && !r.inB) return 'missing';
+  if (!r.inA && r.inB) return 'extra';
+  const over = metricMappings.some(m => {
+    const { a, b } = r.metrics[m.label];
+    return exceedsThreshold(a, b, m);
+  });
+  return over ? 'mismatch' : 'ok';
+}
+
+// ---------- Filters ----------
+function buildDynamicFilters() {
+  const container = document.getElementById('dynamic-filters');
+  let html = '';
+  keyMappings.forEach((m, idx) => {
+    const values = [...new Set(mergedRows.map(r => r.keyParts[idx]))].sort();
+    html += `<select class="dyn-filter" data-keyidx="${idx}">
+      <option value="">All ${m.a}</option>
+      ${values.map(v => `<option value="${v}">${v}</option>`).join('')}
+    </select>`;
+  });
+  html += `<select id="f-status">
+    <option value="">All rows</option>
+    <option value="mismatch">Mismatches only</option>
+    <option value="missing">Not in ${labelB} only</option>
+    <option value="extra">Not in ${labelA} only</option>
+    <option value="ok">Matches only</option>
+  </select>`;
+  html += `<label><input type="checkbox" id="f-hide-zero"> Hide all-zero rows</label>`;
+  container.innerHTML = html;
+  container.querySelectorAll('select, input').forEach(el => el.addEventListener('change', renderTable));
+}
+
+function getFiltered() {
+  const keyFilters = [...document.querySelectorAll('.dyn-filter')].map(el => ({
+    idx: parseInt(el.dataset.keyidx), val: el.value
+  }));
+  const fs = document.getElementById('f-status').value;
+  const hideZero = document.getElementById('f-hide-zero').checked;
+  return mergedRows.filter(r => {
+    for (const kf of keyFilters) {
+      if (kf.val && r.keyParts[kf.idx] !== kf.val) return false;
+    }
+    if (hideZero) {
+      const allZero = metricMappings.every(m => r.metrics[m.label].a === 0 && r.metrics[m.label].b === 0);
+      if (allZero) return false;
+    }
+    const st = rowStatus(r);
+    if (fs === 'mismatch' && st !== 'mismatch') return false;
+    if (fs === 'missing' && st !== 'missing') return false;
+    if (fs === 'extra' && st !== 'extra') return false;
+    if (fs === 'ok' && st !== 'ok') return false;
+    return true;
+  });
+}
+
+// ---------- Table ----------
+function buildTableHead() {
+  const keyHeaders = keyMappings.map(m => `<th class="left" rowspan="2">${m.a}</th>`).join('');
+  const statusHeader = `<th class="left" rowspan="2">Status</th>`;
+  const groupHeaders = metricMappings.map(m => `<th class="group-header" colspan="4" title="Flagged if difference exceeds ${thresholdLabel(m)}">${m.label} (${thresholdLabel(m)})</th>`).join('');
+  const subHeaders = metricMappings.map(() =>
+    `<th class="sub sub-first">${labelA}</th><th class="sub">${labelB}</th><th class="sub">Δ</th><th class="sub">Δ%</th>`).join('');
+  document.getElementById('table-head').innerHTML =
+    `<tr>${keyHeaders}${statusHeader}${groupHeaders}</tr><tr>${subHeaders}</tr>`;
+}
+
+function renderTable() {
+  const rows = getFiltered();
+  const colCount = keyMappings.length + 1 + metricMappings.length * 4;
+  document.getElementById('detail-body').innerHTML = rows.length === 0
+    ? `<tr><td colspan="${colCount}" class="empty">No rows match your filters.</td></tr>`
+    : rows.map(r => {
+        const st = rowStatus(r);
+        const badgeMap = { ok: ['badge-ok', 'Match'], mismatch: ['badge-err', 'Mismatch'], missing: ['badge-missing', `Not in ${labelB}`], extra: ['badge-missing', `Not in ${labelA}`] };
+        const [bc, bl] = badgeMap[st];
+
+        const keyCells = r.keyParts.map(k => `<td class="left" title="${k}">${k}</td>`).join('');
+
+        const metricCols = metricMappings.map(m => {
+          const { a, b } = r.metrics[m.label];
+          const d = a - b;
+          const pct = pctDiffFor(a, b);
+          const cls = diffCls(a, b, m);
+          return `<td class="sep">${fmtNum(a)}</td><td class="muted">${fmtNum(b)}</td><td class="${cls}">${fmtDelta(d)}</td><td class="${cls} muted">${fmtPct(pct)}%</td>`;
+        }).join('');
+
+        return `<tr>${keyCells}<td class="left"><span class="badge ${bc}">${bl}</span></td>${metricCols}</tr>`;
+      }).join('');
+}
+
+// ---------- CSV export ----------
+// ---------- Clear results (keep files + mapping, ready to re-run) ----------
+function clearResults() {
+  mergedRows = [];
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('note-text').textContent = '';
+  document.getElementById('note-text').className = 'note';
+  document.getElementById('row-count-bar').innerHTML = '';
+  document.getElementById('summary-grid').innerHTML = '';
+  document.getElementById('dynamic-filters').innerHTML = '';
+  document.getElementById('table-head').innerHTML = '';
+  document.getElementById('detail-body').innerHTML = '';
+  window.scrollTo({ top: document.getElementById('run-btn').offsetTop - 80, behavior: 'smooth' });
+}
+
+function exportCSV() {
+  const rows = getFiltered();
+  const headers = [...keyMappings.map(m => m.a), 'Status'];
+  metricMappings.forEach(m => headers.push(`${m.label} (${labelA})`, `${m.label} (${labelB})`, `${m.label} Delta`, `${m.label} Delta %`));
+  const statusLabel = { ok: 'Match', mismatch: 'Mismatch', missing: `Not in ${labelB}`, extra: `Not in ${labelA}` };
+  const csv = [headers.join(','), ...rows.map(r => {
+    const st = rowStatus(r);
+    const cells = [...r.keyParts.map(k => `"${k}"`), `"${statusLabel[st]}"`];
+    metricMappings.forEach(m => {
+      const { a, b } = r.metrics[m.label];
+      const pct = pctDiffFor(a, b);
+      cells.push(Math.round(a * 100) / 100, Math.round(b * 100) / 100, Math.round((a - b) * 100) / 100, Math.round(pct * 10) / 10);
+    });
+    return cells.join(',');
+  })].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'DataMatch_QA_Results.csv';
+  a.click();
+}
+</script>
+</body>
+</html>
