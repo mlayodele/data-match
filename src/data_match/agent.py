@@ -122,14 +122,18 @@ def _get_artifact_bytes(artifact):
 
 async def capture_uploaded_files_callback(callback_context) -> None:
     """Capture uploaded files and save as artifacts."""
+    print("[CALLBACK] capture_uploaded_files_callback invoked")
     with _tracer.start_as_current_span("capture_uploaded_files_callback") as span:
         try:
             ictx = getattr(callback_context, "_invocation_context", None)
+            print(f"[CALLBACK] invocation_context available: {ictx is not None}")
             span.set_attribute("has_invocation_context", ictx is not None)
             if ictx is None or ictx.artifact_service is None:
+                print("[CALLBACK] artifact_service is None, returning")
                 span.set_attribute("artifact_service_available", False)
                 return
 
+            print("[CALLBACK] artifact_service available")
             span.set_attribute("artifact_service_available", True)
 
             user_content = getattr(ictx, "user_content", None)
@@ -138,19 +142,23 @@ async def capture_uploaded_files_callback(callback_context) -> None:
                 return
 
             parts = getattr(user_content, "parts", None) or []
+            print(f"[CALLBACK] found {len(parts)} parts to process")
             span.set_attribute("parts_count", len(parts))
 
             with _tracer.start_as_current_span("list_existing_artifacts") as list_span:
                 existing = set(await callback_context.list_artifacts() or [])
+                print(f"[CALLBACK] existing artifacts: {list(existing)}")
                 list_span.set_attribute("existing_artifacts_count", len(existing))
                 list_span.set_attribute("existing_artifacts", list(existing))
 
             for i, part in enumerate(parts):
                 with _tracer.start_as_current_span("process_upload_part") as part_span:
                     part_span.set_attribute("part_index", i)
+                    print(f"[CALLBACK] processing part {i}")
 
                     inline = getattr(part, "inline_data", None)
                     if inline is None or getattr(inline, "data", None) is None:
+                        print(f"[CALLBACK] part {i} has no inline_data, skipping")
                         part_span.set_attribute("has_inline_data", False)
                         continue
 
@@ -159,23 +167,28 @@ async def capture_uploaded_files_callback(callback_context) -> None:
                     mime = (getattr(inline, "mime_type", "") or "").lower()
                     display_name = getattr(part, "file_name", None) or ""
 
+                    print(f"[CALLBACK] part {i}: mime={mime}, name={display_name}")
                     part_span.set_attribute("mime_type", mime)
                     part_span.set_attribute("display_name", display_name)
 
                     if not (mime in {"text/csv", "application/csv", "application/vnd.ms-excel"} or display_name.lower().endswith((".csv", ".xlsx"))):
+                        print(f"[CALLBACK] part {i} file type invalid, skipping")
                         part_span.set_attribute("file_type_valid", False)
                         continue
 
                     part_span.set_attribute("file_type_valid", True)
 
                     if display_name and display_name not in existing:
+                        print(f"[CALLBACK] saving artifact: {display_name}")
                         with _tracer.start_as_current_span("save_artifact") as save_span:
                             save_span.set_attribute("filename", display_name)
                             save_span.set_attribute("is_new", True)
                             await callback_context.save_artifact(display_name, part)
                             existing.add(display_name)
+                            print(f"[CALLBACK] saved successfully: {display_name}")
                             save_span.set_attribute("save_status", "success")
                     else:
+                        print(f"[CALLBACK] artifact already exists: {display_name}")
                         part_span.set_attribute("artifact_already_exists", True)
 
             span.set_attribute("final_artifacts_count", len(existing))

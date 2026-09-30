@@ -50,6 +50,7 @@ REQUIREMENTS = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-gcp-trace>=1.5.0",
+    "opentelemetry-exporter-otlp-proto-http>=0.41b0",
 ]
 
 
