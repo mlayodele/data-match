@@ -24,7 +24,8 @@ WORKFLOW (6 steps):
 
 STEP 1: Upload & Parse Files
 - Ask user to upload two files (Excel or CSV)
-- After user uploads, list all available artifacts to identify which files are uploaded
+- After user uploads, IMMEDIATELY call list_uploaded_files tool to see what's actually available
+- Show the user the list of files found
 - Store both artifact filenames in your memory bank for reference throughout the session
 - For EACH uploaded file:
   * CRITICAL: Agent Q adds preamble rows (metadata, notes, etc.) before actual headers. Real headers are often on row 20-40, NOT row 1
@@ -334,6 +335,34 @@ async def parse_with_header(
             return {"error": str(e)}
 
 
+async def list_uploaded_files(
+    tool_context: ToolContext = None,
+) -> dict[str, Any]:
+    """List all uploaded files currently available as artifacts."""
+    with _tracer.start_as_current_span("list_uploaded_files") as span:
+        try:
+            if not tool_context:
+                return {"error": "No tool context"}
+
+            with _tracer.start_as_current_span("list_artifacts") as list_span:
+                artifacts = await tool_context.list_artifacts() or []
+                list_span.set_attribute("artifacts_count", len(artifacts))
+                list_span.set_attribute("artifacts", artifacts)
+
+            span.set_status(Status(StatusCode.OK))
+            return {
+                "status": "success",
+                "uploaded_files": artifacts,
+                "file_count": len(artifacts),
+                "message": f"Found {len(artifacts)} file(s)" if artifacts else "No files uploaded yet",
+            }
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            return {"error": str(e)}
+
+
 async def debug_memory_bank(
     tool_context: ToolContext = None,
 ) -> dict[str, Any]:
@@ -417,6 +446,7 @@ async def debug_memory_bank(
 
 inspect_tool = FunctionTool(inspect_csv_row)
 parse_tool = FunctionTool(parse_with_header)
+list_files_tool = FunctionTool(list_uploaded_files)
 debug_tool = FunctionTool(debug_memory_bank)
 
 root_agent = Agent(
@@ -424,6 +454,6 @@ root_agent = Agent(
     model=_settings.model,
     description="Data Match — Define comparison schemas (Steps 1-6)",
     instruction=_INSTRUCTION,
-    tools=[inspect_tool, parse_tool, debug_tool],
+    tools=[list_files_tool, inspect_tool, parse_tool, debug_tool],
     before_agent_callback=capture_uploaded_files_callback,
 )

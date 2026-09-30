@@ -28,26 +28,27 @@ The agent orchestrates a 6-step workflow to help users create schemas for data c
 - Users must re-upload files if session ends
 - Schema state exists in memory bank (users can copy/paste for manual persistence)
 
-**Artifact Service Instability**
-- Second file may fail to load on first upload (transient artifact service issue)
-- **Workaround**: Re-upload the file; works reliably on second attempt
-- Issue is not in agent code—it's artifact service latency/timeout
+**Callback Unreliability**
+- Upload callback may not work reliably; kept for potential future support
+- Solution: Agent explicitly lists artifacts at Step 1 via `list_uploaded_files` tool
+- This ensures agent always sees current state, regardless of callback success
 
 **No External Persistence**
-- Attempted GCS integration (callback upload) didn't work; removed to keep code simple
 - No automatic save-to-database; users manually record schemas
 - No multi-session schema retrieval
+- All state is ephemeral (session-scoped only)
 
 ## How It Works
 
 ### Agent Architecture
-- **Tool 1**: `inspect_csv_row()` — Shows row content for user verification
-- **Tool 2**: `parse_with_header()` — Parses CSV at specified header row, returns columns & row count
-- **Tool 3**: `debug_memory_bank()` — Lists all artifacts and their loadability (debugging)
-- **Callback**: Captures uploaded Excel/CSV files and saves as artifacts
+- **Tool 1**: `list_uploaded_files()` — Lists all artifacts currently available (called at Step 1)
+- **Tool 2**: `inspect_csv_row()` — Shows row content for user verification
+- **Tool 3**: `parse_with_header()` — Parses CSV at specified header row, returns columns & row count
+- **Tool 4**: `debug_memory_bank()` — Shows artifact contents for debugging
+- **Callback**: Attempts to capture uploaded Excel/CSV files and save as artifacts (unreliable)
 - **Memory Bank**: Stores artifact filenames after Step 1 confirmation; referenced in Steps 2-6
 - **OpenTelemetry Tracing**: Granular spans track:
-  - File upload/artifact capture (list existing, detect file type, save new)
+  - File uploads and artifact operations
   - Artifact loading and bytes extraction
   - CSV parsing and header detection
   - Tool execution with parameters and results
