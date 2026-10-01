@@ -12,6 +12,7 @@ from opentelemetry.trace import Status, StatusCode
 
 from .config import get_settings
 from .file_parser import parse_file
+from .comparison_engine import run_comparison
 
 _settings = get_settings()
 _tracer = trace.get_tracer(__name__)
@@ -94,8 +95,20 @@ STEP 6: Confirm & Run
   * Match Keys
   * Metrics & Thresholds
   * Filters
-- Ask: "Does this look correct? Are you ready to confirm?"
-- If user confirms, the schema is ready for comparison execution
+- Ask: "Does this look correct? Are you ready to confirm and proceed with the comparison?"
+- If user confirms "yes", proceed to Step 7
+
+STEP 7: Run Comparison (After Schema Confirmation)
+- User confirmed the schema in Step 6
+- Immediately show the CONFIRMED SCHEMA DEFINITION again:
+  * File A: name, header row, all columns, match key columns, metric columns
+  * File B: name, header row, all columns, match key columns, metric columns
+  * Comparison Rules: which columns match, which metrics to compare, thresholds
+- Prompt: "Now please upload the files again. I will run the comparison using this confirmed schema."
+- When files are re-uploaded:
+  * Call run_comparison_analysis tool with exact parameters from schema recap
+  * Tool performs: load → aggregate → compare → flag
+  * Display results: summary stats, metric totals, flagged rows table
 
 KEY PRINCIPLES:
 - Ask ONE question at a time
@@ -533,17 +546,90 @@ async def debug_memory_bank(
             return {"error": str(e)}
 
 
+async def run_comparison_analysis(
+    context: ToolContext,
+    file_a_name: str,
+    file_b_name: str,
+    header_row_a: int,
+    header_row_b: int,
+    match_keys: list[dict[str, str]],
+    metrics: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Run comparison analysis on two files using confirmed schema.
+
+    Args:
+        file_a_name: Name of File A artifact
+        file_b_name: Name of File B artifact
+        header_row_a: Header row number (1-indexed) for File A
+        header_row_b: Header row number (1-indexed) for File B
+        match_keys: List of {file_a_col, file_b_col} match key mappings
+        metrics: List of {name, file_a_col, file_b_col, threshold_pct} metrics
+
+    Returns:
+        Dict with summary_stats, metric_totals, flagged_rows
+    """
+    with _tracer.start_as_current_span("run_comparison_analysis") as span:
+        try:
+            span.set_attribute("file_a", file_a_name)
+            span.set_attribute("file_b", file_b_name)
+            span.set_attribute("match_keys_count", len(match_keys))
+            span.set_attribute("metrics_count", len(metrics))
+
+            # Load file bytes from artifacts (same pattern as parse_with_header)
+            with _tracer.start_as_current_span("load_artifact_for_comparison") as load_span:
+                load_span.set_attribute("file_a", file_a_name)
+                load_span.set_attribute("file_b", file_b_name)
+
+                artifact_a = await context.load_artifact(file_a_name)
+                load_span.set_attribute("artifact_a_loaded", artifact_a is not None)
+
+                artifact_b = await context.load_artifact(file_b_name)
+                load_span.set_attribute("artifact_b_loaded", artifact_b is not None)
+
+            file_a_bytes = _get_artifact_bytes(artifact_a)
+            file_b_bytes = _get_artifact_bytes(artifact_b)
+
+            span.set_attribute("file_a_bytes_extracted", file_a_bytes is not None)
+            span.set_attribute("file_b_bytes_extracted", file_b_bytes is not None)
+
+            if file_a_bytes is None or file_b_bytes is None:
+                return {
+                    "error": f"Could not read files. File A: {file_a_bytes is not None}, File B: {file_b_bytes is not None}"
+                }
+
+            # Run comparison engine
+            with _tracer.start_as_current_span("run_comparison_engine") as cmp_span:
+                result = run_comparison(
+                    file_a_bytes=file_a_bytes,
+                    file_b_bytes=file_b_bytes,
+                    header_row_a=header_row_a,
+                    header_row_b=header_row_b,
+                    match_keys=match_keys,
+                    metrics=metrics,
+                )
+                cmp_span.set_attribute("status", "success")
+
+            span.set_status(Status(StatusCode.OK))
+            return result
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            return {"error": str(e)}
+
+
 discover_tool = FunctionTool(discover_uploaded_files)
 inspect_tool = FunctionTool(inspect_csv_row)
 parse_tool = FunctionTool(parse_with_header)
 list_files_tool = FunctionTool(list_uploaded_files)
 debug_tool = FunctionTool(debug_memory_bank)
+comparison_tool = FunctionTool(run_comparison_analysis)
 
 root_agent = Agent(
     name="data_match",
     model=_settings.model,
-    description="Data Match — Define comparison schemas (Steps 1-6)",
+    description="Data Match — Define comparison schemas and run comparisons",
     instruction=_INSTRUCTION,
-    tools=[discover_tool, list_files_tool, inspect_tool, parse_tool, debug_tool],
+    tools=[discover_tool, list_files_tool, inspect_tool, parse_tool, debug_tool, comparison_tool],
     before_agent_callback=capture_uploaded_files_callback,
 )
