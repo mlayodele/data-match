@@ -62,19 +62,11 @@ STEP 2: Define Match Key
 - Record the mapping
 - Show SCHEMA RECAP with all Step 1 details PLUS Match Keys (file A column = file B column)
 
-STEP 2.5: Suggest & Confirm Match Key Types
-- After user confirms match keys in STEP 2, IMMEDIATELY suggest data types for each match key:
-  * IDs (columns with "ID" in name) → suggest "string"
-  * Date/Time columns (name contains date/time/day/month) → suggest "date"
-  * Other → suggest "string"
-- Ask: "Do these types look correct? (Reply with types or say 'looks good')"
-- User confirms or corrects the types
-- CRITICAL: Create a match_key_types dict with EXACT match key column names:
-  * Use the EXACT file_a_col names from the match keys you collected in STEP 2
-  * Map each to its confirmed type: string, date, or number
-  * Example structure: {"Placement ID": "string", "Date": "date", "Account": "string"}
-  * Save this dict in your internal working memory for use in STEP 7
-- Show SCHEMA RECAP with Match Keys including their confirmed types
+STEP 2.5: Confirm Match Keys (revisit if needed)
+- After user confirms match keys in STEP 2, briefly revisit if there are any corrections
+- Ask: "Does the match key mapping look correct?"
+- User confirms or suggests changes
+- Show SCHEMA RECAP with Match Keys
 
 STEP 3: Define Metrics to Compare
 - Retrieve the artifact filenames from your memory bank
@@ -115,27 +107,20 @@ STEP 6: Confirm & Run
 STEP 7: Run Comparison Analysis
 - User confirmed the schema in Step 6
 - Files are already loaded in artifacts from Steps 1-6
-- Show CONFIRMED SCHEMA DEFINITION (recap all details including match key types)
-- CRITICAL: You MUST pass the match_key_types dict to the tool. This is essential for correct date/ID normalization.
-- Call run_comparison_analysis tool with ALL parameters:
+- Show CONFIRMED SCHEMA DEFINITION (recap all details)
+- Call run_comparison_analysis tool with parameters:
   * file_a_name: artifact filename (from memory bank)
   * file_b_name: artifact filename (from memory bank)
   * header_row_a: confirmed header row number (1-indexed)
   * header_row_b: confirmed header row number (1-indexed)
   * match_keys: list of {file_a_col, file_b_col} dicts (from STEP 2)
   * metrics: list of {name, file_a_col, file_b_col, threshold_pct} dicts (from STEP 3)
-  * match_key_types: REQUIRED — dict with EXACT match key column names and types from STEP 2.5
-    - MUST use exact file_a_col names as keys
-    - Format: {"ColumnName1": "string", "ColumnName2": "date", ...}
-    - Example: {"Placement ID": "string", "Date": "date", "Account": "string"}
-    - Pass ALL match key columns with their confirmed types
-    - DO NOT pass empty dict; ensure all types are specified
-- Tool performs: load files → strip blank rows → aggregate by match key (normalizing types) → compare metrics → flag thresholds
+- Tool performs: load files → aggregate by match key (normalizing numeric IDs) → compare metrics → flag thresholds
 - Tool returns: summary_stats, metric_totals, flagged_rows
 - Display results directly:
   * Summary: Matched pairs, missing in A/B, total flagged count
   * Metric totals (File A, File B, difference, % difference)
-  * Flagged rows: SHOW ONLY FIRST 100 ROWS (if total > 100, note "showing first 100 of X total flagged rows")
+  * Flagged rows (first 10, or all if fewer than 10)
 
 KEY PRINCIPLES:
 - Ask ONE question at a time
@@ -692,15 +677,11 @@ async def run_comparison_analysis(
     header_row_b: int,
     match_keys: list[dict[str, str]],
     metrics: list[dict[str, Any]],
-    match_key_types: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run comparison analysis on two files using confirmed schema.
 
     Loads files from artifacts (same pattern as parse_with_header).
     Aggregates rows by match key, compares metrics, flags threshold breaches.
-
-    Args:
-        match_key_types: Dict mapping match key names to types (string, date, etc.)
     """
     with _tracer.start_as_current_span("run_comparison_analysis") as span:
         try:
@@ -731,7 +712,6 @@ async def run_comparison_analysis(
                     header_row_b=header_row_b,
                     match_keys=match_keys,
                     metrics=metrics,
-                    match_key_types=match_key_types,
                 )
                 cmp_span.set_attribute("status", "success")
 
