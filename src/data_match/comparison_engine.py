@@ -1,4 +1,15 @@
-"""Comparison engine for running schema-driven file analysis."""
+"""Comparison engine for running schema-driven file analysis.
+
+PROBLEM FIXED: HX file has 7,975 blank rows (rows 2085-10060) embedded after real data.
+When pandas reads a numeric column with NaN values, it loads as float64 (not int64).
+This caused "sequence item 0: expected str instance, float found" when joining match keys.
+
+SOLUTION:
+1. Strip blank rows early with dropna(how='all') before any processing
+2. For match key values: fill NaN with 'MISSING' FIRST, then convert to string
+3. Add match_key_types parameter to enable explicit type handling (string, date)
+4. Normalize dates to ISO format and keep IDs as strings consistently
+"""
 from __future__ import annotations
 
 from io import BytesIO
@@ -91,7 +102,18 @@ def run_comparison(
                 cmp_span.set_attribute("flagged_count", comparison["summary_stats"]["flagged_count"])
 
             span.set_attribute("status", "success")
-            return _convert_numpy_types(comparison)
+
+            # Add debug info to results
+            result = _convert_numpy_types(comparison)
+            result["_debug"] = {
+                "match_key_types_passed": bool(match_key_types),
+                "match_key_types_value": match_key_types,
+                "file_a_agg_keys_sample": agg_a["__match_key"].head(5).tolist() if len(agg_a) > 0 else [],
+                "file_b_agg_keys_sample": agg_b["__match_key"].head(5).tolist() if len(agg_b) > 0 else [],
+                "file_a_unique_keys": len(agg_a),
+                "file_b_unique_keys": len(agg_b),
+            }
+            return result
 
         except Exception as e:
             span.set_attribute("status", "error")
