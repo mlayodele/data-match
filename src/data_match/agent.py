@@ -63,15 +63,17 @@ STEP 2: Define Match Key
 - Show SCHEMA RECAP with all Step 1 details PLUS Match Keys (file A column = file B column)
 
 STEP 2.5: Suggest & Confirm Match Key Types
-- After user confirms match keys, suggest data types for each:
+- After user confirms match keys in STEP 2, IMMEDIATELY suggest data types for each match key:
   * IDs (columns with "ID" in name) → suggest "string"
-  * Date/Time columns → suggest "date"
-  * Other numeric → suggest "number"
-- Ask: "Do these types look correct?"
+  * Date/Time columns (name contains date/time/day/month) → suggest "date"
+  * Other → suggest "string"
+- Ask: "Do these types look correct? (Reply with types or say 'looks good')"
 - User confirms or corrects the types
-- CRITICAL: Record the user-confirmed types as a dict mapping match key column names to types:
-  * Example: {"Placement Id": "string", "Date": "date", "Account": "string"}
-  * Store this dict in memory so you can pass it to the comparison tool in STEP 7
+- CRITICAL: Create a match_key_types dict with EXACT match key column names:
+  * Use the EXACT file_a_col names from the match keys you collected in STEP 2
+  * Map each to its confirmed type: string, date, or number
+  * Example structure: {"Placement ID": "string", "Date": "date", "Account": "string"}
+  * Save this dict in your internal working memory for use in STEP 7
 - Show SCHEMA RECAP with Match Keys including their confirmed types
 
 STEP 3: Define Metrics to Compare
@@ -113,22 +115,24 @@ STEP 6: Confirm & Run
 STEP 7: Run Comparison Analysis
 - User confirmed the schema in Step 6
 - Files are already loaded in artifacts from Steps 1-6
-- Show CONFIRMED SCHEMA DEFINITION (recap all details)
-- Call run_comparison_analysis tool with exact schema parameters:
+- Show CONFIRMED SCHEMA DEFINITION (recap all details including match key types)
+- CRITICAL: You MUST pass the match_key_types dict to the tool. This is essential for correct date/ID normalization.
+- Call run_comparison_analysis tool with ALL parameters:
   * file_a_name: artifact filename (from memory bank)
   * file_b_name: artifact filename (from memory bank)
-  * header_row_a: confirmed header row number
-  * header_row_b: confirmed header row number
-  * match_keys: list of {file_a_col, file_b_col} mappings (as collected in STEP 2)
-  * metrics: list of {name, file_a_col, file_b_col, threshold_pct} (as collected in STEP 3)
-  * match_key_types: IMPORTANT — dict mapping match key column names to their confirmed types from STEP 2.5
-    - Format: {"column_name_1": "type_1", "column_name_2": "type_2", ...}
-    - Example: {"Placement Id": "string", "Date": "date"}
-    - Use the EXACT column names from match_keys file_a_col values
-    - Include ALL match key columns with their confirmed types
-- Tool performs: load files → strip blank rows → aggregate by match key (using type specs) → compare metrics → flag thresholds
-- Tool returns: summary_stats (matched/missing/flagged), metric_totals, flagged_rows
-- Display results:
+  * header_row_a: confirmed header row number (1-indexed)
+  * header_row_b: confirmed header row number (1-indexed)
+  * match_keys: list of {file_a_col, file_b_col} dicts (from STEP 2)
+  * metrics: list of {name, file_a_col, file_b_col, threshold_pct} dicts (from STEP 3)
+  * match_key_types: REQUIRED — dict with EXACT match key column names and types from STEP 2.5
+    - MUST use exact file_a_col names as keys
+    - Format: {"ColumnName1": "string", "ColumnName2": "date", ...}
+    - Example: {"Placement ID": "string", "Date": "date", "Account": "string"}
+    - Pass ALL match key columns with their confirmed types
+    - DO NOT pass empty dict; ensure all types are specified
+- Tool performs: load files → strip blank rows → aggregate by match key (normalizing types) → compare metrics → flag thresholds
+- Tool returns: summary_stats, metric_totals, flagged_rows
+- Display results directly:
   * Summary: Matched pairs, missing in A/B, total flagged count
   * Metric totals (File A, File B, difference, % difference)
   * Flagged rows: SHOW ONLY FIRST 100 ROWS (if total > 100, note "showing first 100 of X total flagged rows")
@@ -569,6 +573,117 @@ async def debug_memory_bank(
             return {"error": str(e)}
 
 
+def format_comparison_results(results: dict[str, Any]) -> dict[str, Any]:
+    """Format comparison results for display with type conversion verification.
+
+    Shows summary stats, metric totals, flagged rows, and DEBUG section with:
+    - Types applied (inferred or passed by user)
+    - Sample match keys from both files (to verify type conversion)
+    - Type conversion check (warns if .0 artifacts present)
+    """
+    with _tracer.start_as_current_span("format_comparison_results") as span:
+        try:
+            output_lines = []
+            output_lines.append("=" * 80)
+            output_lines.append("COMPARISON ANALYSIS RESULTS")
+            output_lines.append("=" * 80)
+
+            # Summary stats
+            if "summary_stats" in results:
+                stats = results["summary_stats"]
+                output_lines.append("\nSummary Statistics:")
+                output_lines.append(f"  • Matched Pairs: {stats.get('matched_pairs', 0)}")
+                output_lines.append(f"  • Missing in File A: {stats.get('missing_in_a', 0)}")
+                output_lines.append(f"  • Missing in File B: {stats.get('missing_in_b', 0)}")
+                output_lines.append(f"  • Total Flagged Rows: {stats.get('flagged_count', 0)}")
+
+            # Metric totals
+            if "metric_totals" in results:
+                output_lines.append("\nMetric Totals:")
+                for metric_name, values in results["metric_totals"].items():
+                    output_lines.append(f"\n  {metric_name}:")
+                    output_lines.append(f"    • File A Total: {values.get('file_a', 0)}")
+                    output_lines.append(f"    • File B Total: {values.get('file_b', 0)}")
+                    output_lines.append(f"    • Difference: {values.get('delta', 0):.2f}")
+                    output_lines.append(f"    • Percentage Difference: {values.get('delta_pct', 0):.2f}%")
+
+            # DEBUG: Type inference and key samples
+            output_lines.append("\n" + "=" * 80)
+            output_lines.append("DEBUG: Type Inference & Match Key Samples")
+            output_lines.append("=" * 80)
+
+            if "_debug" in results:
+                debug = results["_debug"]
+
+                output_lines.append(f"\nTypes Passed by Agent: {debug.get('match_key_types_passed_by_agent', False)}")
+                output_lines.append(f"Types Applied: {debug.get('match_key_types_applied', {})}")
+                output_lines.append(f"Note: {debug.get('note', 'N/A')}")
+
+                output_lines.append(f"\n\nFile A Unique Keys: {debug.get('file_a_unique_keys', 0)}")
+                output_lines.append("File A Sample Keys (first 5):")
+                for key in debug.get('file_a_agg_keys_sample', []):
+                    output_lines.append(f"  • {key}")
+
+                output_lines.append(f"\n\nFile B Unique Keys: {debug.get('file_b_unique_keys', 0)}")
+                output_lines.append("File B Sample Keys (first 5):")
+                for key in debug.get('file_b_agg_keys_sample', []):
+                    output_lines.append(f"  • {key}")
+
+                # Type conversion check
+                keys_a = debug.get('file_a_agg_keys_sample', [])
+                keys_b = debug.get('file_b_agg_keys_sample', [])
+
+                output_lines.append("\n" + "-" * 80)
+                output_lines.append("TYPE CONVERSION VERIFICATION:")
+                output_lines.append("-" * 80)
+
+                float_keys_a = [k for k in keys_a if '.0|' in k or k.endswith('.0')]
+                float_keys_b = [k for k in keys_b if '.0|' in k or k.endswith('.0')]
+
+                if float_keys_a or float_keys_b:
+                    output_lines.append("⚠️  WARNING: Float artifacts (.0) detected!")
+                    if float_keys_a:
+                        output_lines.append(f"  File A has {len(float_keys_a)} keys with .0: {float_keys_a[:3]}")
+                    if float_keys_b:
+                        output_lines.append(f"  File B has {len(float_keys_b)} keys with .0: {float_keys_b[:3]}")
+                    output_lines.append("  → Type conversion NOT working correctly")
+                else:
+                    output_lines.append("✓ GOOD: No float artifacts (.0) detected in match keys")
+                    output_lines.append("  → Types are being converted correctly")
+
+            # Flagged rows (first 10)
+            if "flagged_rows" in results and results["flagged_rows"]:
+                flagged = results["flagged_rows"][:10]
+                total_flagged = len(results["flagged_rows"])
+
+                output_lines.append("\n" + "=" * 80)
+                output_lines.append(f"Flagged Rows (showing first {len(flagged)} of {total_flagged} total):")
+                output_lines.append("=" * 80)
+
+                for row in flagged:
+                    output_lines.append(f"\n  Match Key: {row.get('match_key', 'N/A')}")
+                    output_lines.append(f"  Status: {row.get('status', 'N/A')}")
+                    if row.get('file_a_metrics'):
+                        for metric, val in row['file_a_metrics'].items():
+                            output_lines.append(f"    File A {metric}: {val}")
+                    if row.get('file_b_metrics'):
+                        for metric, val in row['file_b_metrics'].items():
+                            output_lines.append(f"    File B {metric}: {val}")
+
+            output_lines.append("\n" + "=" * 80)
+
+            span.set_attribute("formatted", True)
+            return {
+                "status": "success",
+                "formatted_results": "\n".join(output_lines),
+            }
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            return {"error": str(e)}
+
+
 async def run_comparison_analysis(
     context: ToolContext,
     file_a_name: str,
@@ -635,12 +750,13 @@ parse_tool = FunctionTool(parse_with_header)
 list_files_tool = FunctionTool(list_uploaded_files)
 debug_tool = FunctionTool(debug_memory_bank)
 comparison_tool = FunctionTool(run_comparison_analysis)
+format_results_tool = FunctionTool(format_comparison_results)
 
 root_agent = Agent(
     name="data_match",
     model=_settings.model,
     description="Data Match — Define schemas and run comparisons",
     instruction=_INSTRUCTION,
-    tools=[discover_tool, list_files_tool, inspect_tool, parse_tool, debug_tool, comparison_tool],
+    tools=[discover_tool, list_files_tool, inspect_tool, parse_tool, debug_tool, comparison_tool, format_results_tool],
     before_agent_callback=capture_uploaded_files_callback,
 )
