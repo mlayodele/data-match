@@ -110,11 +110,12 @@ STEP 7: Run Comparison Analysis
   * match_keys: list of {file_a_col, file_b_col} mappings
   * metrics: list of {name, file_a_col, file_b_col, threshold_pct}
 - Tool performs: load files → aggregate by match key → compare metrics → flag thresholds
-- Tool returns: summary_stats (matched/missing/flagged), metric_totals, flagged_rows
+- Tool returns: summary_stats (matched/missing/flagged), metric_totals, flagged_rows (first 10)
 - Display results:
   * Summary: Matched pairs, missing in A/B, total flagged count
   * Metric totals (File A, File B, difference, % difference)
-  * Flagged rows: SHOW ONLY FIRST 100 ROWS (if total > 100, note "showing first 100 of X total flagged rows")
+  * Flagged rows: SHOW ONLY FIRST 10 ROWS (if total > 10, note "showing first 10 of X total flagged rows")
+  * If user wants to see all flagged rows, they can call show_all_flagged_rows tool with same parameters
 
 KEY PRINCIPLES:
 - Ask ONE question at a time
@@ -565,6 +566,7 @@ async def run_comparison_analysis(
 
     Loads files from artifacts (same pattern as parse_with_header).
     Aggregates rows by match key, compares metrics, flags threshold breaches.
+    Returns summary + first 10 flagged rows. Call show_all_flagged_rows to see all.
     """
     with _tracer.start_as_current_span("run_comparison_analysis") as span:
         try:
@@ -598,6 +600,66 @@ async def run_comparison_analysis(
                 )
                 cmp_span.set_attribute("status", "success")
 
+            # Limit flagged rows to first 10 for initial display
+            total_flagged = len(result.get("flagged_rows", []))
+            result["flagged_rows"] = result.get("flagged_rows", [])[:10]
+            result["flagged_rows_showing"] = len(result["flagged_rows"])
+            result["flagged_rows_total"] = total_flagged
+            if total_flagged > 10:
+                result["flagged_rows_note"] = f"Showing first 10 of {total_flagged} total flagged rows. Call show_all_flagged_rows to see all."
+
+            span.set_status(Status(StatusCode.OK))
+            return result
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            return {"error": str(e)}
+
+
+async def show_all_flagged_rows(
+    context: ToolContext,
+    file_a_name: str,
+    file_b_name: str,
+    header_row_a: int,
+    header_row_b: int,
+    match_keys: list[dict[str, str]],
+    metrics: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Show all flagged rows from comparison (no limit). Run this after run_comparison_analysis if you need to see all flagged rows."""
+    with _tracer.start_as_current_span("show_all_flagged_rows") as span:
+        try:
+            # Load files
+            with _tracer.start_as_current_span("load_artifact_for_all_rows") as load_span:
+                artifact_a = await context.load_artifact(file_a_name)
+                artifact_b = await context.load_artifact(file_b_name)
+                load_span.set_attribute("artifact_a_loaded", artifact_a is not None)
+                load_span.set_attribute("artifact_b_loaded", artifact_b is not None)
+
+            file_a_bytes = _get_artifact_bytes(artifact_a)
+            file_b_bytes = _get_artifact_bytes(artifact_b)
+
+            if file_a_bytes is None or file_b_bytes is None:
+                return {"error": f"Could not read files"}
+
+            # Run comparison without row limit
+            with _tracer.start_as_current_span("run_comparison_engine_all_rows") as cmp_span:
+                result = run_comparison(
+                    file_a_bytes=file_a_bytes,
+                    file_b_bytes=file_b_bytes,
+                    header_row_a=header_row_a,
+                    header_row_b=header_row_b,
+                    match_keys=match_keys,
+                    metrics=metrics,
+                )
+                cmp_span.set_attribute("status", "success")
+
+            # Return all flagged rows without limit
+            total_flagged = len(result.get("flagged_rows", []))
+            result["flagged_rows_showing"] = total_flagged
+            result["flagged_rows_total"] = total_flagged
+            result["flagged_rows_note"] = f"Showing all {total_flagged} flagged rows"
+
             span.set_status(Status(StatusCode.OK))
             return result
 
@@ -613,12 +675,13 @@ parse_tool = FunctionTool(parse_with_header)
 list_files_tool = FunctionTool(list_uploaded_files)
 debug_tool = FunctionTool(debug_memory_bank)
 comparison_tool = FunctionTool(run_comparison_analysis)
+all_rows_tool = FunctionTool(show_all_flagged_rows)
 
 root_agent = Agent(
     name="data_match",
     model=_settings.model,
     description="Data Match — Define schemas and run comparisons",
     instruction=_INSTRUCTION,
-    tools=[discover_tool, list_files_tool, inspect_tool, parse_tool, debug_tool, comparison_tool],
+    tools=[discover_tool, list_files_tool, inspect_tool, parse_tool, debug_tool, comparison_tool, all_rows_tool],
     before_agent_callback=capture_uploaded_files_callback,
 )

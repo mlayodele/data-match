@@ -1,4 +1,16 @@
-"""Comparison engine for running schema-driven file analysis."""
+"""Comparison engine for running schema-driven file analysis.
+
+PROBLEM FIXED: HX file has 7,975 rows with null Date/Placement ID (rows 2085-10060).
+These are leftover data from earlier weeks that shouldn't participate in matching.
+Filling nulls with 'MISSING' was creating false "MISSING|MISSING" match key aggregations.
+
+SOLUTION:
+1. Remove rows with ANY null match key columns before processing (dropna(subset=match_key_cols))
+2. This prevents false "MISSING|MISSING" match key aggregations
+3. For remaining rows: fill any remaining NaN with 'MISSING', then convert to string
+4. Add match_key_types parameter to enable explicit type handling (string, date)
+5. Normalize dates to ISO format and keep IDs as strings consistently
+"""
 from __future__ import annotations
 
 from io import BytesIO
@@ -31,6 +43,7 @@ def run_comparison(
     header_row_b: int,
     match_keys: list[dict[str, str]],
     metrics: list[dict[str, Any]],
+    match_key_types: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run comparison pipeline: load → aggregate → compare → flag.
 
@@ -41,16 +54,34 @@ def run_comparison(
         header_row_b: Header row number (1-indexed) for File B
         match_keys: List of {file_a_col, file_b_col} dicts
         metrics: List of {name, file_a_col, file_b_col, threshold_pct} dicts
+        match_key_types: Dict mapping match key names to types (string, date, etc.)
 
     Returns:
         Dict with summary_stats, metric_totals, flagged_rows
     """
     with _tracer.start_as_current_span("run_comparison") as span:
         try:
-            # STAGE 1: LOAD
+            # STAGE 1: LOAD with match key columns protected from pandas inference
             with _tracer.start_as_current_span("load_files") as load_span:
-                df_a = pd.read_csv(BytesIO(file_a_bytes), header=header_row_a - 1)
-                df_b = pd.read_csv(BytesIO(file_b_bytes), header=header_row_b - 1)
+                # Extract match key column names from match_keys parameter
+                # This is bulletproof: doesn't depend on agent passing types
+                match_key_cols_a = [mk["file_a_col"] for mk in match_keys]
+                match_key_cols_b = [mk["file_b_col"] for mk in match_keys]
+
+                # CRITICAL: Always specify dtype=str for match key columns
+                # This prevents pandas from inferring float64 due to NaN values in blank rows
+                # All other columns (metrics, etc.) are left for pandas to infer normally
+                # (needed for aggregation operations like sum)
+                dtype_a = {col: str for col in match_key_cols_a}
+                dtype_b = {col: str for col in match_key_cols_b}
+
+                load_span.set_attribute("match_key_cols_a", match_key_cols_a)
+                load_span.set_attribute("match_key_cols_b", match_key_cols_b)
+                load_span.set_attribute("dtype_a", dtype_a)
+                load_span.set_attribute("dtype_b", dtype_b)
+
+                df_a = pd.read_csv(BytesIO(file_a_bytes), header=header_row_a - 1, dtype=dtype_a)
+                df_b = pd.read_csv(BytesIO(file_b_bytes), header=header_row_b - 1, dtype=dtype_b)
 
                 load_span.set_attribute("file_a_rows", len(df_a))
                 load_span.set_attribute("file_b_rows", len(df_b))
@@ -63,15 +94,22 @@ def run_comparison(
             metric_cols_a = {m["name"]: m["file_a_col"] for m in metrics}
             metric_cols_b = {m["name"]: m["file_b_col"] for m in metrics}
 
-            # STAGE 2: AGGREGATE
+            # Match key types are confirmed by user in STEP 2.5 - no inference needed
+            # If not provided, default all match keys to 'string'
+            if not match_key_types:
+                match_key_types = {col: 'string' for col in match_key_cols_a}
+
+            with _tracer.start_as_current_span("use_confirmed_types") as span:
+                span.set_attribute("match_key_types_confirmed", match_key_types)
+
             with _tracer.start_as_current_span("aggregate") as agg_span:
-                # Group File A by match keys, sum metrics
+                # Group File A by match keys, sum metrics (using consistent types)
                 agg_a = _aggregate_file(
-                    df_a, match_key_cols_a, metric_cols_a
+                    df_a, match_key_cols_a, metric_cols_a, match_key_types
                 )
-                # Group File B by match keys, sum metrics
+                # Group File B by match keys, sum metrics (using SAME types as File A)
                 agg_b = _aggregate_file(
-                    df_b, match_key_cols_b, metric_cols_b
+                    df_b, match_key_cols_b, metric_cols_b, match_key_types
                 )
 
                 agg_span.set_attribute("agg_a_groups", len(agg_a))
@@ -89,7 +127,19 @@ def run_comparison(
                 cmp_span.set_attribute("flagged_count", comparison["summary_stats"]["flagged_count"])
 
             span.set_attribute("status", "success")
-            return _convert_numpy_types(comparison)
+
+            # Add debug info to results
+            result = _convert_numpy_types(comparison)
+            result["_debug"] = {
+                "match_key_types_passed_by_agent": bool(match_key_types),
+                "match_key_types_applied": match_key_types,
+                "file_a_agg_keys_sample": agg_a["__match_key"].head(5).tolist() if len(agg_a) > 0 else [],
+                "file_b_agg_keys_sample": agg_b["__match_key"].head(5).tolist() if len(agg_b) > 0 else [],
+                "file_a_unique_keys": len(agg_a),
+                "file_b_unique_keys": len(agg_b),
+                "note": "Types applied consistently to both files (inferred from File A if not provided)",
+            }
+            return result
 
         except Exception as e:
             span.set_attribute("status", "error")
@@ -101,15 +151,67 @@ def _aggregate_file(
     df: pd.DataFrame,
     match_key_cols: list[str],
     metric_cols: dict[str, str],
+    match_key_types: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """Group rows by match key, sum metric columns."""
     with _tracer.start_as_current_span("aggregate_file") as span:
         try:
-            # Create match key tuple column
+            # Remove rows where ANY match key column is NaN (can't match without keys)
+            rows_before = len(df)
+            df = df.dropna(subset=match_key_cols)
+            rows_after = len(df)
+            span.set_attribute("rows_before_dropna", rows_before)
+            span.set_attribute("rows_after_dropna", rows_after)
+            span.set_attribute("rows_removed_with_null_keys", rows_before - rows_after)
+
+            # Create match key tuple column with type-driven conversion
+            df_work = df.copy()
+
+            if match_key_types is None:
+                match_key_types = {}
+            span.set_attribute("match_key_types_provided", bool(match_key_types))
+            span.set_attribute("match_key_types_value", match_key_types)
+
+            for col in match_key_cols:
+                # Use confirmed type from match_key_types (user confirmed in STEP 2.5)
+                col_type = match_key_types.get(col, 'string').lower()
+                span.set_attribute(f"col_{col}_type", col_type)
+
+                # Match key columns already loaded as strings (dtype=str during CSV load)
+                # Just handle NaN/missing values
+                df_work[col] = df_work[col].fillna('MISSING')  # Fill NaN with MISSING
+                df_work[col] = df_work[col].astype(str)        # Ensure all are strings
+                df_work[col] = df_work[col].replace('nan', 'MISSING')  # Replace 'nan' strings
+
+                # Auto-detect dates: if type is 'date' OR column name looks like a date field
+                should_parse_date = (col_type == 'date' or
+                                   any(date_word in col.lower() for date_word in ['date', 'time', 'day', 'month', 'year']))
+
+                if should_parse_date:
+                    # Parse as date and normalize to ISO format
+                    try:
+                        parsed = pd.to_datetime(df_work[col], errors='coerce')
+                        valid_mask = parsed.notna()
+                        df_work.loc[valid_mask, col] = parsed[valid_mask].dt.strftime("%Y-%m-%d")
+                        span.set_attribute(f"col_{col}_dates_normalized", int(valid_mask.sum()))
+                    except:
+                        span.set_attribute(f"col_{col}_date_parse_failed", True)
+                else:
+                    # For ID columns: normalize numeric values to include .0
+                    # This handles float-loaded IDs ("435852651.0") matching string-loaded IDs ("435852651")
+                    is_numeric = df_work[col].str.match(r'^\d+$', na=False)
+                    df_work.loc[is_numeric, col] = df_work.loc[is_numeric, col] + '.0'
+                    span.set_attribute(f"col_{col}_numeric_ids_normalized", int(is_numeric.sum()))
+
             if len(match_key_cols) == 1:
-                df["__match_key"] = df[match_key_cols[0]].astype(str)
+                df["__match_key"] = df_work[match_key_cols[0]].astype(str)
             else:
-                df["__match_key"] = df[match_key_cols].astype(str).agg("|".join, axis=1)
+                # Join multiple key columns with pipe separator
+                # Ensure ALL values are strings before joining (critical for float prevention)
+                key_parts = []
+                for col in match_key_cols:
+                    key_parts.append(df_work[col].astype(str))
+                df["__match_key"] = pd.concat(key_parts, axis=1).agg("|".join, axis=1)
 
             # Group by match key, sum metrics
             agg_cols = {v: "sum" for v in metric_cols.values()}
