@@ -31,6 +31,7 @@ def run_comparison(
     header_row_b: int,
     match_keys: list[dict[str, str]],
     metrics: list[dict[str, Any]],
+    match_key_types: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run comparison pipeline: load → aggregate → compare → flag.
 
@@ -41,6 +42,7 @@ def run_comparison(
         header_row_b: Header row number (1-indexed) for File B
         match_keys: List of {file_a_col, file_b_col} dicts
         metrics: List of {name, file_a_col, file_b_col, threshold_pct} dicts
+        match_key_types: Dict mapping match key names to types (string, date, etc.)
 
     Returns:
         Dict with summary_stats, metric_totals, flagged_rows
@@ -67,11 +69,11 @@ def run_comparison(
             with _tracer.start_as_current_span("aggregate") as agg_span:
                 # Group File A by match keys, sum metrics
                 agg_a = _aggregate_file(
-                    df_a, match_key_cols_a, metric_cols_a
+                    df_a, match_key_cols_a, metric_cols_a, match_key_types
                 )
                 # Group File B by match keys, sum metrics
                 agg_b = _aggregate_file(
-                    df_b, match_key_cols_b, metric_cols_b
+                    df_b, match_key_cols_b, metric_cols_b, match_key_types
                 )
 
                 agg_span.set_attribute("agg_a_groups", len(agg_a))
@@ -101,15 +103,47 @@ def _aggregate_file(
     df: pd.DataFrame,
     match_key_cols: list[str],
     metric_cols: dict[str, str],
+    match_key_types: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """Group rows by match key, sum metric columns."""
     with _tracer.start_as_current_span("aggregate_file") as span:
         try:
-            # Create match key tuple column
+            # Remove rows where ALL columns are NaN (blank rows from export padding)
+            df = df.dropna(how='all')
+            span.set_attribute("rows_after_dropna", len(df))
+
+            # Create match key tuple column with type-driven conversion
+            df_work = df.copy()
+
+            if match_key_types is None:
+                match_key_types = {}
+            span.set_attribute("match_key_types_provided", bool(match_key_types))
+
+            for col in match_key_cols:
+                col_type = match_key_types.get(col, 'string').lower() if match_key_types else 'string'
+                span.set_attribute(f"col_{col}_type", col_type)
+
+                # CRITICAL: Convert to string FIRST, then fill NaN with MISSING
+                # This ensures no float values survive to the join operation
+                df_work[col] = df_work[col].fillna('MISSING')  # Fill before astype
+                df_work[col] = df_work[col].astype(str)        # Then convert all to string
+                df_work[col] = df_work[col].replace('nan', 'MISSING')  # Replace any 'nan' strings
+
+                if col_type == 'date':
+                    # Parse as date and normalize to ISO format
+                    try:
+                        parsed = pd.to_datetime(df_work[col], errors='coerce')
+                        valid_mask = parsed.notna()
+                        df_work.loc[valid_mask, col] = parsed[valid_mask].dt.strftime("%Y-%m-%d")
+                        span.set_attribute(f"col_{col}_dates_normalized", int(valid_mask.sum()))
+                    except:
+                        span.set_attribute(f"col_{col}_date_parse_failed", True)
+                # For 'string' type or any other, keep as string (already converted)
+
             if len(match_key_cols) == 1:
-                df["__match_key"] = df[match_key_cols[0]].astype(str)
+                df["__match_key"] = df_work[match_key_cols[0]].astype(str)
             else:
-                df["__match_key"] = df[match_key_cols].astype(str).agg("|".join, axis=1)
+                df["__match_key"] = df_work[match_key_cols].astype(str).agg("|".join, axis=1)
 
             # Group by match key, sum metrics
             agg_cols = {v: "sum" for v in metric_cols.values()}

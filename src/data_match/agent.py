@@ -62,6 +62,18 @@ STEP 2: Define Match Key
 - Record the mapping
 - Show SCHEMA RECAP with all Step 1 details PLUS Match Keys (file A column = file B column)
 
+STEP 2.5: Suggest & Confirm Match Key Types
+- After user confirms match keys, suggest data types for each:
+  * IDs (columns with "ID" in name) → suggest "string"
+  * Date/Time columns → suggest "date"
+  * Other numeric → suggest "number"
+- Ask: "Do these types look correct?"
+- User confirms or corrects the types
+- CRITICAL: Record the user-confirmed types as a dict mapping match key column names to types:
+  * Example: {"Placement Id": "string", "Date": "date", "Account": "string"}
+  * Store this dict in memory so you can pass it to the comparison tool in STEP 7
+- Show SCHEMA RECAP with Match Keys including their confirmed types
+
 STEP 3: Define Metrics to Compare
 - Retrieve the artifact filenames from your memory bank
 - Ask: "Which columns should I compare?"
@@ -107,9 +119,14 @@ STEP 7: Run Comparison Analysis
   * file_b_name: artifact filename (from memory bank)
   * header_row_a: confirmed header row number
   * header_row_b: confirmed header row number
-  * match_keys: list of {file_a_col, file_b_col} mappings
-  * metrics: list of {name, file_a_col, file_b_col, threshold_pct}
-- Tool performs: load files → aggregate by match key → compare metrics → flag thresholds
+  * match_keys: list of {file_a_col, file_b_col} mappings (as collected in STEP 2)
+  * metrics: list of {name, file_a_col, file_b_col, threshold_pct} (as collected in STEP 3)
+  * match_key_types: IMPORTANT — dict mapping match key column names to their confirmed types from STEP 2.5
+    - Format: {"column_name_1": "type_1", "column_name_2": "type_2", ...}
+    - Example: {"Placement Id": "string", "Date": "date"}
+    - Use the EXACT column names from match_keys file_a_col values
+    - Include ALL match key columns with their confirmed types
+- Tool performs: load files → strip blank rows → aggregate by match key (using type specs) → compare metrics → flag thresholds
 - Tool returns: summary_stats (matched/missing/flagged), metric_totals, flagged_rows
 - Display results:
   * Summary: Matched pairs, missing in A/B, total flagged count
@@ -560,11 +577,15 @@ async def run_comparison_analysis(
     header_row_b: int,
     match_keys: list[dict[str, str]],
     metrics: list[dict[str, Any]],
+    match_key_types: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run comparison analysis on two files using confirmed schema.
 
     Loads files from artifacts (same pattern as parse_with_header).
     Aggregates rows by match key, compares metrics, flags threshold breaches.
+
+    Args:
+        match_key_types: Dict mapping match key names to types (string, date, etc.)
     """
     with _tracer.start_as_current_span("run_comparison_analysis") as span:
         try:
@@ -595,6 +616,7 @@ async def run_comparison_analysis(
                     header_row_b=header_row_b,
                     match_keys=match_keys,
                     metrics=metrics,
+                    match_key_types=match_key_types,
                 )
                 cmp_span.set_attribute("status", "success")
 
