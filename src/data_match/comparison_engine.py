@@ -13,12 +13,14 @@ SOLUTION:
 """
 from __future__ import annotations
 
+import itertools
 from io import BytesIO
 from typing import Any
 
 import numpy as np
 import pandas as pd
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 _tracer = trace.get_tracer(__name__)
 
@@ -247,7 +249,11 @@ def _compare_aggregated(
 
             # Get metric names
             metric_names = [m["name"] for m in metrics]
-            threshold_map = {m["name"]: m.get("threshold_pct", 0) for m in metrics}
+            threshold_pct_map = {m["name"]: m.get("threshold_pct", 0) for m in metrics}
+            # Absolute/unit threshold (e.g. "$1,000"), optional per metric.
+            # None means "not set" -- distinct from 0, which would flag any
+            # nonzero delta.
+            threshold_units_map = {m["name"]: m.get("threshold_units") for m in metrics}
 
             # Find all unique match keys
             all_keys = set(agg_a["__match_key"].values) | set(agg_b["__match_key"].values)
@@ -297,16 +303,36 @@ def _compare_aggregated(
                         delta = val_b - val_a
                         deltas[metric_name] = delta
 
-                        # Calculate % diff (handle zero baseline)
+                        threshold_pct = threshold_pct_map.get(metric_name, 0)
+                        threshold_units = threshold_units_map.get(metric_name)
+
                         if val_a == 0:
-                            delta_pct = 100.0 if delta != 0 else 0.0
+                            # Percentage change from a zero baseline is
+                            # mathematically undefined, not just inconvenient --
+                            # don't fabricate a number for it. Fall back to the
+                            # absolute/unit threshold when one is configured,
+                            # since it's still meaningful (e.g. "$0 vs $50,000"
+                            # is worth flagging, "$0 vs $0.02" is not).
+                            delta_pct = None
+                            if threshold_units is not None:
+                                exceeds = abs(delta) > threshold_units
+                            else:
+                                # No unit threshold configured: preserve prior
+                                # behavior (flag any nonzero delta) since there's
+                                # no dollar floor to fall back on.
+                                exceeds = delta != 0
                         else:
                             delta_pct = (delta / val_a) * 100
+                            exceeds_pct = abs(delta_pct) > threshold_pct
+                            exceeds_units = (
+                                threshold_units is not None
+                                and abs(delta) > threshold_units
+                            )
+                            exceeds = exceeds_pct or exceeds_units
+
                         delta_pcts[metric_name] = delta_pct
 
-                        # Check threshold
-                        threshold = threshold_map.get(metric_name, 0)
-                        if abs(delta_pct) > threshold:
+                        if exceeds:
                             is_mismatch = True
 
                     if is_mismatch:
@@ -352,4 +378,111 @@ def _compare_aggregated(
 
         except Exception as e:
             span.record_exception(e)
+            raise
+
+
+def run_multi_file_comparison(
+    files: list[dict[str, Any]],
+    match_keys: list[dict[str, Any]],
+    metrics: list[dict[str, Any]],
+    mode: str = "baseline",
+    baseline_file: str | None = None,
+) -> dict[str, Any]:
+    """Compare 2+ files pairwise: aggregate each file once, then compare pairs.
+
+    Args:
+        files: List of {name, bytes, header_row} per file.
+        match_keys: List of {columns: {file_name: col_name}, type: "string"|"date"}.
+            Each file may use a different column name for the same logical key
+            (e.g. "ID" in File A, "Client_ID" in File B).
+        metrics: List of {name, columns: {file_name: col_name}, threshold_pct}.
+        mode: "baseline" (compare every other file against `baseline_file`) or
+            "all_pairs" (compare every combination of two files).
+        baseline_file: Required when mode="baseline" — must match one of
+            files[i]["name"].
+
+    Returns:
+        Dict with mode, baseline_file, file_names, pairs_compared, and a
+        `results` list — one run_comparison-shaped result per pair, each
+        tagged with file_a/file_b.
+    """
+    with _tracer.start_as_current_span("run_multi_file_comparison") as span:
+        try:
+            file_names = [f["name"] for f in files]
+            span.set_attribute("file_count", len(files))
+            span.set_attribute("file_names", file_names)
+            span.set_attribute("mode", mode)
+
+            if len(files) < 2:
+                raise ValueError("At least 2 files are required for comparison")
+            if mode == "baseline":
+                if not baseline_file:
+                    raise ValueError("baseline_file is required when mode='baseline'")
+                if baseline_file not in file_names:
+                    raise ValueError(f"baseline_file '{baseline_file}' not found in files")
+            elif mode != "all_pairs":
+                raise ValueError(f"mode must be 'baseline' or 'all_pairs', got '{mode}'")
+
+            # Aggregate each file exactly once, using that file's own column
+            # names for the match keys / metrics (column names may differ
+            # per file even though they represent the same logical field).
+            aggregated: dict[str, pd.DataFrame] = {}
+            for f in files:
+                name = f["name"]
+                header_row = f["header_row"]
+
+                match_key_cols = [mk["columns"][name] for mk in match_keys]
+                metric_cols = {m["name"]: m["columns"][name] for m in metrics}
+                match_key_types = {
+                    mk["columns"][name]: mk.get("type", "string") for mk in match_keys
+                }
+
+                dtype_map = {col: str for col in match_key_cols}
+                with _tracer.start_as_current_span("load_file") as load_span:
+                    load_span.set_attribute("file_name", name)
+                    df = pd.read_csv(
+                        BytesIO(f["bytes"]), header=header_row - 1, dtype=dtype_map
+                    )
+                    load_span.set_attribute("rows", len(df))
+
+                aggregated[name] = _aggregate_file(
+                    df, match_key_cols, metric_cols, match_key_types
+                )
+
+            if mode == "all_pairs":
+                pairs = list(itertools.combinations(file_names, 2))
+            else:
+                pairs = [(baseline_file, name) for name in file_names if name != baseline_file]
+
+            span.set_attribute("pairs_count", len(pairs))
+
+            results = []
+            for file_a, file_b in pairs:
+                with _tracer.start_as_current_span("compare_pair") as pair_span:
+                    pair_span.set_attribute("file_a", file_a)
+                    pair_span.set_attribute("file_b", file_b)
+                    comparison = _compare_aggregated(
+                        aggregated[file_a], aggregated[file_b], metrics
+                    )
+                    pair_span.set_attribute(
+                        "flagged_count", comparison["summary_stats"]["flagged_count"]
+                    )
+                results.append({
+                    "file_a": file_a,
+                    "file_b": file_b,
+                    **_convert_numpy_types(comparison),
+                })
+
+            span.set_status(Status(StatusCode.OK))
+            return {
+                "mode": mode,
+                "baseline_file": baseline_file,
+                "file_names": file_names,
+                "pairs_compared": [[a, b] for a, b in pairs],
+                "results": results,
+            }
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
             raise

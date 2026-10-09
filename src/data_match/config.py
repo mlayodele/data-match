@@ -19,6 +19,12 @@ class Settings:
     model: str
     gcp_project: str
     location: str
+    # Vertex location for the *model* endpoint only — deliberately separate
+    # from `location`. The Gemini 3.x family (incl. gemini-3.7-flash) is served
+    # exclusively from the `global` endpoint and 404s in us-central1, while the
+    # Agent Engine is a regional resource that must stay on `location`.
+    # Collapsing the two would break one or the other.
+    model_location: str
 
 
 
@@ -36,8 +42,8 @@ def _require(name: str) -> str:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings(
-        model=os.environ.get("MODEL", "gemini-2.5-flash"),
+        model=os.environ.get("MODEL_ID", os.environ.get("MODEL", "gemini-3.7-flash")),
         gcp_project=os.environ.get("GOOGLE_CLOUD_PROJECT", ""),
         location=os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"),
-
+        model_location=os.environ.get("MODEL_LOCATION", "global"),
     )

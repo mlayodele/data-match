@@ -10,13 +10,13 @@ Usage:
 
 Examples:
     # Create new engine
-    python scripts/deploy_to_agent_engine.py --model gemini-2.5-flash create
+    python scripts/deploy_to_agent_engine.py --model gemini-3.7-flash create
 
     # Update existing engine
-    python scripts/deploy_to_agent_engine.py --model gemini-2.5-flash update --resource-name projects/.../reasoningEngines/...
+    python scripts/deploy_to_agent_engine.py --model gemini-3.7-flash update --resource-name projects/.../reasoningEngines/...
 
 Environment Variables (optional):
-    MODEL                    — Gemini model to use (default: gemini-2.5-flash)
+    MODEL                    — Gemini model to use (default: gemini-3.7-flash)
     GCS_PROJECT_ID           — GCP project ID (default: horizon-ai-462013)
     GCS_STAGING_BUCKET       — GCS bucket for staging (default: gs://horizon-ai-462013-agentq-staging)
     GOOGLE_GENAI_USE_VERTEXAI — Set to "1" to use Vertex AI (default: 1)
@@ -37,7 +37,7 @@ DEFAULT_LOCATION = "us-central1"
 DEFAULT_STAGING_BUCKET = "gs://horizon-ai-462013-agentq-staging"
 DEFAULT_SERVICE_ACCOUNT = "agentq-runtime-staging@horizon-ai-462013.iam.gserviceaccount.com"
 DEFAULT_DISPLAY_NAME = "Data Match"
-DEFAULT_MODEL = os.getenv("MODEL", "gemini-2.5-flash")
+DEFAULT_MODEL = os.getenv("MODEL", "gemini-3.7-flash")
 
 # Requirements for data match agent
 REQUIREMENTS = [
@@ -70,6 +70,11 @@ def _build_env_vars(args: argparse.Namespace) -> dict[str, str]:
     """Build environment variables for agent."""
     env: dict[str, str] = {}
     env["MODEL_ID"] = args.model
+    # Gemini 3.x (incl. gemini-3.7-flash) is served ONLY from the `global`
+    # Vertex endpoint — it 404s in regional endpoints like us-central1. This
+    # pins the model client to `global` while GCP_PROJECT/LOCATION keep the
+    # Agent Engine itself regional. Do not collapse the two.
+    env["MODEL_LOCATION"] = os.getenv("MODEL_LOCATION", "global")
     env["GCP_PROJECT"] = args.project
     env["LOCATION"] = args.location
     env["GOOGLE_GENAI_USE_VERTEXAI"] = "1"
@@ -83,6 +88,9 @@ def _build_env_vars(args: argparse.Namespace) -> dict[str, str]:
 def _build_adk_app(model: str):
     """Construct the AdkApp wrapping the data match agent."""
     os.environ.setdefault("MODEL_ID", model)
+    # Gemini 3.x is served only from the `global` Vertex endpoint (404s in
+    # regional endpoints). build_model() reads this at import time below.
+    os.environ.setdefault("MODEL_LOCATION", os.getenv("MODEL_LOCATION", "global"))
     os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "1")
 
     from vertexai.agent_engines import AdkApp

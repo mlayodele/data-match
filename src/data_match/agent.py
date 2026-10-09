@@ -12,7 +12,8 @@ from opentelemetry.trace import Status, StatusCode
 
 from .config import get_settings
 from .file_parser import parse_file
-from .comparison_engine import run_comparison
+from .comparison_engine import run_comparison, run_multi_file_comparison
+from .model_factory import build_model
 
 _settings = get_settings()
 _tracer = trace.get_tracer(__name__)
@@ -116,6 +117,25 @@ STEP 7: Run Comparison Analysis
   * Metric totals (File A, File B, difference, % difference)
   * Flagged rows: SHOW ONLY FIRST 10 ROWS (if total > 10, note "showing first 10 of X total flagged rows")
   * If user wants to see all flagged rows, they can call show_all_flagged_rows tool with same parameters
+
+COMPARING 3+ FILES (instead of STEPS 1-7 above):
+- Everything in STEP 1 (upload, discover, confirm header row per file) applies the same way — just for every file, not only two.
+- After all files' headers are confirmed, ask: "Compare all files against one baseline, or compare every pair against each other?"
+  - If baseline: ask "Which file is the baseline?"
+- Define match key(s) PER FILE, not just A/B: ask "Which column identifies a matching row in [file 1]? ... in [file 2]? ... in [file 3]?" (column names may differ per file, e.g. "ID" in one, "Client_ID" in another)
+- Define metrics PER FILE the same way: "Which column is [metric name] in [file 1]? ... in [file 2]? ..."
+- Thresholds and filters: same as STEP 4/5, apply once per metric (shared across all pairs)
+- Show SCHEMA RECAP the same way, listing all files and their per-file column mappings
+- To run: call run_multi_file_comparison_analysis with:
+  * file_names: list of artifact filenames
+  * header_rows: list of header row numbers (same order as file_names)
+  * match_keys: list of {"columns": {file_name: col_name, ...}, "type": "string"|"date"}
+  * metrics: list of {"name": ..., "columns": {file_name: col_name, ...}, "threshold_pct": ...}
+  * mode: "baseline" or "all_pairs"
+  * baseline_file: required if mode="baseline"
+- Tool returns one result per pair (e.g. "Horizon vs Client A", "Horizon vs Client B"). Display them ONE AT A TIME as "Report 1/N", "Report 2/N", etc. — same summary/metric-totals/first-10-flagged-rows format as the 2-file case for each pair.
+- User can say "next" to see the next pair's report, or "go back to report X" to jump to a specific one.
+- If total flagged rows for a pair exceeds 10, note it the same way as the 2-file case. Call show_all_flagged_rows_multi (same parameters as run_multi_file_comparison_analysis, plus file_a/file_b naming the specific pair) if the user wants all flagged rows for one pair.
 
 KEY PRINCIPLES:
 - Ask ONE question at a time
@@ -669,6 +689,121 @@ async def show_all_flagged_rows(
             return {"error": str(e)}
 
 
+async def run_multi_file_comparison_analysis(
+    context: ToolContext,
+    file_names: list[str],
+    header_rows: list[int],
+    match_keys: list[dict[str, Any]],
+    metrics: list[dict[str, Any]],
+    mode: str,
+    baseline_file: str | None = None,
+) -> dict[str, Any]:
+    """Run comparison across 3+ files (or 2, as a trivial case).
+
+    Aggregates each file once, then compares pairs according to `mode`:
+    "baseline" compares every other file against `baseline_file`; "all_pairs"
+    compares every combination of two files. Returns one result per pair,
+    each with summary_stats/metric_totals and the first 10 flagged rows.
+    Call show_all_flagged_rows_multi for the full list on one pair.
+    """
+    with _tracer.start_as_current_span("run_multi_file_comparison_analysis") as span:
+        try:
+            span.set_attribute("file_count", len(file_names))
+            span.set_attribute("mode", mode)
+
+            files = []
+            for name, header_row in zip(file_names, header_rows):
+                artifact = await context.load_artifact(name)
+                file_bytes = _get_artifact_bytes(artifact)
+                if file_bytes is None:
+                    return {"error": f"Could not read {name}"}
+                files.append({"name": name, "bytes": file_bytes, "header_row": header_row})
+
+            result = run_multi_file_comparison(
+                files=files,
+                match_keys=match_keys,
+                metrics=metrics,
+                mode=mode,
+                baseline_file=baseline_file,
+            )
+
+            # Limit flagged rows to first 10 PER PAIR for initial display
+            for pair_result in result["results"]:
+                total_flagged = len(pair_result.get("flagged_rows", []))
+                pair_result["flagged_rows"] = pair_result.get("flagged_rows", [])[:10]
+                pair_result["flagged_rows_showing"] = len(pair_result["flagged_rows"])
+                pair_result["flagged_rows_total"] = total_flagged
+                if total_flagged > 10:
+                    pair_result["flagged_rows_note"] = (
+                        f"Showing first 10 of {total_flagged} total flagged rows for "
+                        f"{pair_result['file_a']} vs {pair_result['file_b']}. "
+                        "Call show_all_flagged_rows_multi to see all for this pair."
+                    )
+
+            span.set_status(Status(StatusCode.OK))
+            return result
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            return {"error": str(e)}
+
+
+async def show_all_flagged_rows_multi(
+    context: ToolContext,
+    file_names: list[str],
+    header_rows: list[int],
+    match_keys: list[dict[str, Any]],
+    metrics: list[dict[str, Any]],
+    mode: str,
+    file_a: str,
+    file_b: str,
+    baseline_file: str | None = None,
+) -> dict[str, Any]:
+    """Show all flagged rows (no limit) for ONE specific pair from a multi-file comparison.
+
+    Pass the same parameters as run_multi_file_comparison_analysis, plus
+    file_a/file_b naming the specific pair to expand.
+    """
+    with _tracer.start_as_current_span("show_all_flagged_rows_multi") as span:
+        try:
+            span.set_attribute("file_a", file_a)
+            span.set_attribute("file_b", file_b)
+
+            files = []
+            for name, header_row in zip(file_names, header_rows):
+                artifact = await context.load_artifact(name)
+                file_bytes = _get_artifact_bytes(artifact)
+                if file_bytes is None:
+                    return {"error": f"Could not read {name}"}
+                files.append({"name": name, "bytes": file_bytes, "header_row": header_row})
+
+            result = run_multi_file_comparison(
+                files=files,
+                match_keys=match_keys,
+                metrics=metrics,
+                mode=mode,
+                baseline_file=baseline_file,
+            )
+
+            for pair_result in result["results"]:
+                if pair_result["file_a"] == file_a and pair_result["file_b"] == file_b:
+                    total = len(pair_result.get("flagged_rows", []))
+                    pair_result["flagged_rows_showing"] = total
+                    pair_result["flagged_rows_total"] = total
+                    pair_result["flagged_rows_note"] = f"Showing all {total} flagged rows"
+                    span.set_status(Status(StatusCode.OK))
+                    return pair_result
+
+            span.set_attribute("error", f"Pair {file_a} vs {file_b} not found")
+            return {"error": f"Pair {file_a} vs {file_b} not found in this comparison"}
+
+        except Exception as e:
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            return {"error": str(e)}
+
+
 discover_tool = FunctionTool(discover_uploaded_files)
 inspect_tool = FunctionTool(inspect_csv_row)
 parse_tool = FunctionTool(parse_with_header)
@@ -676,12 +811,21 @@ list_files_tool = FunctionTool(list_uploaded_files)
 debug_tool = FunctionTool(debug_memory_bank)
 comparison_tool = FunctionTool(run_comparison_analysis)
 all_rows_tool = FunctionTool(show_all_flagged_rows)
+multi_comparison_tool = FunctionTool(run_multi_file_comparison_analysis)
+multi_all_rows_tool = FunctionTool(show_all_flagged_rows_multi)
 
 root_agent = Agent(
     name="data_match",
-    model=_settings.model,
+    # Not a bare model string: that would make ADK build its genai client from
+    # GOOGLE_CLOUD_LOCATION (us-central1), where Gemini 3.x is not served.
+    # build_model() pins the model endpoint to `model_location` without moving
+    # the Agent Engine off its region.
+    model=build_model(),
     description="Data Match — Define schemas and run comparisons",
     instruction=_INSTRUCTION,
-    tools=[discover_tool, list_files_tool, inspect_tool, parse_tool, debug_tool, comparison_tool, all_rows_tool],
+    tools=[
+        discover_tool, list_files_tool, inspect_tool, parse_tool, debug_tool,
+        comparison_tool, all_rows_tool, multi_comparison_tool, multi_all_rows_tool,
+    ],
     before_agent_callback=capture_uploaded_files_callback,
 )

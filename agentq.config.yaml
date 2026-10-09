@@ -17,7 +17,7 @@ deployment:
   service_account: null
   resource_name: null
 runtime:
-  model: gemini-2.5-flash
+  model: gemini-3.7-flash
   python_packages:
     - google-adk>=1.27.0
     - google-genai>=1.0.0
@@ -25,7 +25,13 @@ runtime:
     - cloudpickle>=3.0.0
     - pydantic>=2.5.0
   extra_packages: []
-  env_vars: {}
+  env_vars:
+    # Gemini 3.x (incl. gemini-3.7-flash) is served ONLY from the `global`
+    # Vertex endpoint — it 404s in us-central1. This pins the model client to
+    # `global` while GOOGLE_CLOUD_LOCATION keeps the Agent Engine regional
+    # (us-central1). Do not collapse the two.
+    # Drop this once/if the model is published to us-central1.
+    MODEL_LOCATION: global
 knowledge_base:
   provider: none
   datastore_id: null
